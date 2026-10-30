@@ -1,0 +1,438 @@
+# Copyright (c) the IW4x authors (see the AUTHORS file).
+# SPDX-License-Identifier: GPL-3.0-only WITH AdditionRef-IW4x-Exception-1.1
+
+# The messages are in hex (see the serializer tests for how the keys read).
+# The arguments map the field numbers onto the schema types.
+
+: empty
+: Message without fields
+:
+$* <'' >:''
+
+: varint
+: Varint values as the integer schema types
+:
+{{
+  $* 1=uint64 <'089601'                 >'1 uint64 150' : uint64
+  $* 1=int32  <'08ffffffffffffffffff01' >'1 int32 -1'   : int32-negative
+  $* 1=int64  <'08ffffffffffffffffff01' >'1 int64 -1'   : int64-negative
+  $* 1=uint64 <'088000'                 >'1 uint64 0'   : redundant
+
+  : uint64-max
+  :
+  $* 1=uint64 <'08ffffffffffffffffff01' >'1 uint64 18446744073709551615'
+
+  : enumeration
+  :
+  $* 1=enumeration <'08feffffffffffffffff01' >'1 enumeration -2'
+
+  : int32-unextended
+  : Negative int32 written in 32 bits, without the sign extension
+  :
+  $* 1=int32 <'08ffffffff0f' >'1 int32 -1'
+
+  : uint32-truncated
+  : Value wider than the schema type, cut to its lower 32 bits
+  :
+  $* 1=uint32 <'088180808010' >'1 uint32 1'
+}}
+
+: zigzag
+: ZigZag values as the sint32 and sint64 schema types
+:
+{{
+  $* 1=sint32 <'0800'         >'1 sint32 0'           : zero
+  $* 1=sint32 <'0803'         >'1 sint32 -2'          : minus-two
+  $* 1=sint32 <'08feffffff0f' >'1 sint32 2147483647'  : sint32-max
+  $* 1=sint32 <'08ffffffff0f' >'1 sint32 -2147483648' : sint32-min
+
+  : sint64-max
+  :
+  $* 1=sint64 <'08feffffffffffffffff01' >'1 sint64 9223372036854775807'
+
+  : sint64-min
+  :
+  $* 1=sint64 <'08ffffffffffffffffff01' >'1 sint64 -9223372036854775808'
+}}
+
+: boolean
+:
+{{
+  $* 1=boolean <'0801' >'1 boolean true'  : true
+  $* 1=boolean <'0800' >'1 boolean false' : false
+
+  : nonzero
+  : Value other than 0 and 1, which is true
+  :
+  $* 1=boolean <'0802' >'1 boolean true'
+}}
+
+: fixed
+: Little-endian values as the fixed-size schema types
+:
+{{
+  $* 1=sfixed32 <'0dfeffffff'         >'1 sfixed32 -2' : sfixed32
+  $* 1=fixed64  <'090100000000000000' >'1 fixed64 1'   : fixed64
+  $* 1=float32  <'0d0000c03f'         >'1 float32 1.5' : float32
+  $* 1=float32  <'0d0000807f'         >'1 float32 inf' : float32-infinity
+  $* 1=float32  <'0d00000080'         >'1 float32 -0'  : float32-negative-zero
+
+  : fixed32
+  :
+  $* 1=fixed32 <'0dffffffff' >'1 fixed32 4294967295'
+
+  : sfixed64
+  :
+  $* 1=sfixed64 <'09feffffffffffffff' >'1 sfixed64 -2'
+
+  : float64
+  :
+  $* 1=float64 <'0900000000000004c0' >'1 float64 -2.5'
+}}
+
+: len
+: Length-delimited values as the bytes and string schema types
+:
+{{
+  $* 2=bytes  <'120474657374' >'2 bytes 74657374'  : bytes
+  $* 2=bytes  <'1200'         >'2 bytes '          : bytes-empty
+  $* 2=bytes  <'1202c0af'     >'2 bytes c0af'      : bytes-binary
+  $* 2=string <'120474657374' >'2 string 74657374' : string
+  $* 2=string <'1204f09f9880' >'2 string f09f9880' : string-four-byte
+
+  : string-invalid
+  : String value that is not UTF-8
+  :
+  $* 2=string <'08011203eda080' 2>>EOE != 0
+  error: invalid UTF-8 in string field 2
+    info: at offset 2
+  EOE
+}}
+
+: field
+: Field numbers in the key
+:
+{{
+  $* 16=uint32        <'800100'       >'16 uint32 0'        : two-byte
+  $* 536870911=uint32 <'f8ffffff0f00' >'536870911 uint32 0' : max
+
+  : repeated
+  : Same field more than once
+  :
+  $* 1=uint32 <'08010802' >>EOO
+  1 uint32 1
+  1 uint32 2
+  EOO
+}}
+
+: unknown
+: Fields that the schema doesn't map, skipped over
+:
+{{
+  : wire-types
+  : Field of each wire type
+  :
+  $* <'08960112036162630d01000000090100000000000000' >>EOO
+  1 varint at 0
+  2 len at 3
+  1 i32 at 8
+  1 i64 at 13
+  EOO
+
+  : group
+  : Group with its fields
+  :
+  $* 1=uint32 <'2b08012c0801' >>EOO
+  5 sgroup at 0
+  1 uint32 1
+  EOO
+
+  : group-unchecked
+  : Nested group that is only counted, with its end mismatched
+  :
+  $* <'2b2b342c' >'5 sgroup at 0'
+}}
+
+: schema
+: Wire type that doesn't match the schema type
+:
+{{
+  : fixed32
+  :
+  $* 1=fixed32 <'089601' 2>>EOE != 0
+  error: expected i32 instead of varint in field 1
+    info: at offset 0
+  EOE
+
+  : message
+  :
+  $* 1=message <'0801' 2>>EOE != 0
+  error: expected len instead of varint in field 1
+    info: at offset 0
+  EOE
+
+  : group
+  :
+  $* 1=group <'0a00' 2>>EOE != 0
+  error: expected sgroup instead of len in field 1
+    info: at offset 0
+  EOE
+}}
+
+: invalid
+: Malformed fields
+:
+{{
+  : key-incomplete
+  : Key cut short
+  :
+  $* <'80' 2>>EOE != 0
+  error: incomplete field key
+    info: at offset 0
+  EOE
+
+  : key-wide
+  : Key wider than 32 bits
+  :
+  $* <'8080808010' 2>>EOE != 0
+  error: invalid field key
+    info: at offset 0
+  EOE
+
+  : key-overflow
+  : Key wider than 64 bits
+  :
+  $* <'ffffffffffffffffff7f' 2>>EOE != 0
+  error: invalid field key
+    info: at offset 0
+  EOE
+
+  : field-zero
+  : Field number 0, which is reserved
+  :
+  $* <'0001' 2>>EOE != 0
+  error: invalid field number 0
+    info: at offset 0
+  EOE
+
+  : wire-type
+  : Wire types 6 and 7, which are not defined
+  :
+  {{
+    $* <'0e' 2>>EOE != 0 : six
+    error: invalid wire type 6 in field 1
+      info: at offset 0
+    EOE
+
+    $* <'0f' 2>>EOE != 0 : seven
+    error: invalid wire type 7 in field 1
+      info: at offset 0
+    EOE
+  }}
+
+  : varint-incomplete
+  : Varint cut short, after a valid field
+  :
+  $* <'08010880' 2>>EOE != 0
+  error: incomplete varint value in field 1
+    info: at offset 2
+  EOE
+
+  : varint-overflow
+  : Varint whose tenth byte has bits above bit 63
+  :
+  $* <'08ffffffffffffffffff02' 2>>EOE != 0
+  error: invalid varint value in field 1
+    info: at offset 0
+  EOE
+
+  : varint-long
+  : Varint of more than ten bytes
+  :
+  $* <'08808080808080808080800100' 2>>EOE != 0
+  error: invalid varint value in field 1
+    info: at offset 0
+  EOE
+
+  : i32-incomplete
+  :
+  $* <'0d010000' 2>>EOE != 0
+  error: incomplete i32 value in field 1
+    info: at offset 0
+  EOE
+
+  : i64-incomplete
+  :
+  $* <'09010000000000' 2>>EOE != 0
+  error: incomplete i64 value in field 1
+    info: at offset 0
+  EOE
+
+  : len-incomplete
+  : Value shorter than its length
+  :
+  $* <'120361' 2>>EOE != 0
+  error: incomplete len value in field 2
+    info: at offset 0
+  EOE
+
+  : len-length-incomplete
+  : Length cut short
+  :
+  $* <'1280' 2>>EOE != 0
+  error: incomplete len value in field 2
+    info: at offset 0
+  EOE
+
+  : len-length-huge
+  : Length larger than any input
+  :
+  $* <'12ffffffffffffffffff01' 2>>EOE != 0
+  error: incomplete len value in field 2
+    info: at offset 0
+  EOE
+
+  : egroup-unexpected
+  : End of a group that has not begun
+  :
+  $* <'2c' 2>>EOE != 0
+  error: unexpected egroup in field 5
+    info: at offset 0
+  EOE
+
+  : group-incomplete
+  : Group without its end
+  :
+  $* <'2b0801' 2>>EOE != 0
+  error: incomplete group in field 5
+    info: at offset 0
+  EOE
+
+  : group-mismatch
+  : Group ended by the end of another field
+  :
+  $* <'2b0801340801' 2>>EOE != 0
+  error: expected egroup of field 5 instead of field 6
+    info: at offset 3
+  EOE
+}}
+
+: message
+: Nested messages
+:
+{{
+  : field
+  :
+  $* 4=message 1=uint32 <'2203089601' >>EOO
+  4 message
+    1 uint32 150
+  EOO
+
+  : nested
+  : Message in a message
+  :
+  $* 4=message 2=message 1=uint32 <'220412020801' >>EOO
+  4 message
+    2 message
+      1 uint32 1
+  EOO
+
+  : position
+  : Positions of nested fields in the outermost input
+  :
+  $* 4=message <'08012203089601' >>EOO
+  1 varint at 0
+  4 message
+    1 varint at 4
+  EOO
+
+  : invalid
+  : Malformed nested field, at its position in the outermost input
+  :
+  $* 4=message <'080122020880' 2>>EOE != 0
+  error: incomplete varint value in field 1
+    info: at offset 4
+  EOE
+}}
+
+: group
+: Groups between the sgroup and egroup keys
+:
+{{
+  : field
+  :
+  $* 5=group 1=uint32 <'2b08012c' >>EOO
+  5 group
+    1 uint32 1
+  EOO
+
+  : nested
+  : Group in a group of the same field
+  :
+  $* 5=group <'2b2b2c2c' >>EOO
+  5 group
+    5 group
+  EOO
+
+  : invalid
+  : Nested group with its end mismatched, found once parsed
+  :
+  $* 5=group <'2b2b342c' 2>>EOE != 0
+  error: expected egroup of field 5 instead of field 6
+    info: at offset 2
+  EOE
+}}
+
+: repeated
+: Repeated fields, packed or not
+:
+{{
+  $* 3=repeated-sint32  <'1803'       >'3 repeated-sint32 -2'     : unpacked
+  $* 3=repeated-sint32  <'1a03020306' >'3 repeated-sint32 1 -2 3' : sint32
+  $* 3=repeated-uint64  <'1a03960101' >'3 repeated-uint64 150 1'  : uint64
+  $* 3=repeated-uint32  <'1a00'       >'3 repeated-uint32 '       : empty
+
+  : boolean
+  :
+  $* 3=repeated-boolean <'1a020100' >'3 repeated-boolean true false'
+
+  : fixed32
+  :
+  $* 3=repeated-fixed32 <'1a080100000002000000' >'3 repeated-fixed32 1 2'
+
+  : float64
+  :
+  $* 3=repeated-float64 <'1a08000000000000f03f' >'3 repeated-float64 1'
+
+  : mixed
+  : Packed and unpacked fields of one repeated field
+  :
+  $* 3=repeated-sint32 <'1a030203061808' >>EOO
+  3 repeated-sint32 1 -2 3
+  3 repeated-sint32 4
+  EOO
+
+  : mismatch
+  : Wire type that is neither the element's nor len
+  :
+  $* 3=repeated-sint32 <'1d01000000' 2>>EOE != 0
+  error: expected varint or len instead of i32 in field 3
+    info: at offset 0
+  EOE
+
+  : fixed32-incomplete
+  : Packed i32 elements of an incomplete length
+  :
+  $* 3=repeated-fixed32 <'1a050100000002' 2>>EOE != 0
+  error: incomplete i32 value in field 3
+    info: at offset 0
+  EOE
+
+  : varint-incomplete
+  : Packed varint element cut short
+  :
+  $* 3=repeated-uint32 <'1a020180' 2>>EOE != 0
+  error: incomplete varint value in field 3
+    info: at offset 0
+  EOE
+}}
