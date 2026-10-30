@@ -26,14 +26,17 @@ The development setup for `libprotobuf` uses the standard `bdep`-based
 workflow. On Linux we build natively with GCC and also cross-compile for
 Windows with MinGW-w64 GCC, running the tests under Wine with `WINEPATH`
 pointing to the directory that contains the MinGW runtime DLLs
-(`/usr/x86_64-w64-mingw32/sys-root/mingw/bin` on Fedora). For example:
+(`/usr/x86_64-w64-mingw32/sys-root/mingw/bin` on Fedora). The `libicuuc`
+dependency builds its data with the ICU tools, which go into a configuration
+for the host that `--create-host-config` creates. For example:
 
 ```
 git clone https://github.com/iw4x-x64-stage/libprotobuf.git
 cd libprotobuf
 
-bdep init -C @gcc cc config.cxx=g++
-bdep init -C @mingw cc config.cxx=x86_64-w64-mingw32-g++ \
+bdep init -C @gcc --create-host-config cc config.cxx=g++
+bdep init -C @mingw --create-host-config cc \
+  config.cxx=x86_64-w64-mingw32-g++ \
   config.test.runner="env WINEPATH=/usr/x86_64-w64-mingw32/sys-root/mingw/bin wine"
 bdep update -a
 bdep test -a
@@ -46,7 +49,7 @@ matching PowerShell, which builds 64-bit binaries. For example:
 git clone https://github.com/iw4x-x64-stage/libprotobuf.git
 cd libprotobuf
 
-bdep init -C -@msvc cc config.cxx=cl
+bdep init -C -@msvc --create-host-config cc config.cxx=cl
 bdep update
 bdep test
 ```
