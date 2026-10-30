@@ -7,7 +7,8 @@
 #include <limits>   // numeric_limits
 #include <concepts> // integral, floating_point
 
-#include <libprotobuf/utf8.hxx>
+#include <unicode/utf8.h> // U8_NEXT()
+
 #include <libprotobuf/varint.hxx>
 #include <libprotobuf/contract.hxx>
 
@@ -529,9 +530,20 @@ namespace protobuf
   {
     expect (wire_type::len);
 
-    if (!valid_utf8 (bytes_))
-      throw invalid_input (base_ + position_,
-                           "invalid UTF-8 in string field {}", field_);
+    // Check the value as the serializer does (see serializer::string() for
+    // details).
+    //
+    const uint8_t* p (reinterpret_cast<const uint8_t*> (bytes_.data ()));
+
+    for (size_t i (0); i != bytes_.size (); )
+    {
+      UChar32 c;
+      U8_NEXT (p, i, bytes_.size (), c);
+
+      if (c < 0)
+        throw invalid_input (base_ + position_,
+                             "invalid UTF-8 in string field {}", field_);
+    }
 
     return bytes_;
   }

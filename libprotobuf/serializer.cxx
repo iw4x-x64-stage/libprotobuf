@@ -8,7 +8,8 @@
 #include <concepts>  // integral, floating_point
 #include <algorithm> // ranges::is_sorted()
 
-#include <libprotobuf/utf8.hxx>
+#include <unicode/utf8.h> // U8_NEXT()
+
 #include <libprotobuf/varint.hxx>
 #include <libprotobuf/contract.hxx>
 
@@ -359,8 +360,21 @@ namespace protobuf
   {
     LIBPROTOBUF_INVARIANT (invariant ());
 
-    if (!valid_utf8 (v))
-      throw invalid_output ("invalid UTF-8 in string field {}", f);
+    // Check that the value is well-formed UTF-8 as RFC 3629 defines it,
+    // which is when U8_NEXT() decodes every character to a non-negative
+    // value. ICU documents the offset as int32_t, but the macro works with
+    // any integer type and so we give it our size_t.
+    //
+    const uint8_t* p (reinterpret_cast<const uint8_t*> (v.data ()));
+
+    for (size_t i (0); i != v.size (); )
+    {
+      UChar32 c;
+      U8_NEXT (p, i, v.size (), c);
+
+      if (c < 0)
+        throw invalid_output ("invalid UTF-8 in string field {}", f);
+    }
 
     bytes (f, v);
   }
