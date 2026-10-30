@@ -31,12 +31,12 @@ using namespace protobuf;
 
 namespace
 {
-  // Value of a packable schema type, as the driver prints it.
+  // Scalar value type that the driver prints.
   //
   template <typename T>
   concept scalar = integral<T> || floating_point<T>;
 
-  // Return the value as text. Booleans are spelled true and false and the
+  // Return the value as text, with booleans spelled true and false and
   // floating point values in their shortest form.
   //
   template <scalar T>
@@ -61,7 +61,7 @@ namespace
     return r;
   }
 
-  // Return the bytes that the hex digits make up.
+  // Decode the hex digits.
   //
   string
   from_hex (string_view s)
@@ -83,9 +83,9 @@ namespace
     return r;
   }
 
-  // Return the value of the current field, or the values of the repeated
-  // field that the current field appends, as text through the parser
-  // function of the type.
+  // Return the current field's value (or the values that it appends to a
+  // repeated field) as text, reading it with the parser function of the
+  // type.
   //
   template <scalar T, T (parser::*F) () const>
   string
@@ -160,7 +160,7 @@ namespace
     {"repeated-float64",     &read_repeated<double, &parser::float64>}
   };
 
-  // Field number to the name of its type.
+  // Map of field numbers to type names.
   //
   using schema = map<uint32_t, string_view>;
 
@@ -260,8 +260,8 @@ main (int argc, char* argv[])
 
   const string m (from_hex (h));
 
-  // Print the fields only once the whole message is parsed, so that a
-  // failure only has the diagnostics.
+  // Only print the fields once the whole message is parsed so that on
+  // failure the output only contains the diagnostics.
   //
   string r;
 

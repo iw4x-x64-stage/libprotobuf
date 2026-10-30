@@ -4,8 +4,8 @@
 intf_libs = # Interface dependencies.
 impl_libs = # Implementation dependencies.
 
-# The UTF-8 validation of the string fields comes from ICU, which no public
-# header includes.
+# We use ICU to validate UTF-8 in string fields. It is an implementation
+# dependency since none of our public headers include ICU headers.
 #
 import impl_libs += libicuuc%lib{icuuc}
 
@@ -49,7 +49,7 @@ else
   install.subdirs = true
 }
 
-# The varint coding is internal: no public header includes it and so it
-# stays out of the installed headers.
+# Don't install the varint coding header since it's an implementation
+# detail that no public header includes.
 #
 hxx{varint}@./: install = false

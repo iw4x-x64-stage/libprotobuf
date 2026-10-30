@@ -14,40 +14,40 @@
 
 #include <libprotobuf/export.hxx>
 
-// Delimited messages in a stream.
+// Delimited messages.
 //
-// A message carries no length of its own and so takes up the rest of its
-// input. To keep several messages in one stream, we write each one preceded
-// by its size as a varint. This is the delimited form that the Protocol
-// Buffers libraries write and read as well, with writeDelimitedTo() and
-// parseDelimitedFrom() in Java, say.
+// A message is not self-delimiting: it extends to the end of its input. So
+// to store several messages in a stream we precede each with its size as a
+// varint. This is the same delimited format as used by the reference
+// implementation (writeDelimitedTo() and parseDelimitedFrom() in Java, for
+// example).
 //
-// The stream buffers below carry the messages of such a stream one at a
-// time: next() begins the next message, whose bytes are then what the
-// buffer reads or writes.
+// The stream buffers below handle such a stream one message at a time:
+// next() begins the next message after which the buffer reads or writes its
+// bytes.
 //
 namespace protobuf
 {
-  // Default limit of the message size in istreambuf. The size comes from
-  // the stream, so we limit it to keep a corrupt or hostile one from making
-  // us wait for, and store, more than we expect.
+  // Default message size limit of istreambuf. The size comes from the
+  // stream, so we limit it to make sure a corrupt or malicious stream cannot
+  // make us wait for and store an arbitrary amount of data.
   //
   inline constexpr std::size_t default_max_message (64 * 1024 * 1024);
 
-  // Stream buffer that reads the delimited messages of another stream.
+  // Stream buffer that reads delimited messages from another stream.
   //
-  // After next() has begun a message, reading gets the bytes of that
-  // message and then the end of the stream. The faults in the other stream
-  // are reported with invalid_input, whose position is the offset of the
-  // message's size in what the buffer has read from the other stream.
+  // After next() begins a message, reading returns its bytes followed by the
+  // end of stream. Faults in the other stream are reported by throwing
+  // invalid_input with the position being the offset of the message size in
+  // the data read from the other stream.
   //
-  // Note that the buffer reads the other stream's buffer directly, so the
-  // other stream's state stays as it is.
+  // Note that the buffer reads from the other stream's buffer directly and
+  // so the other stream's state is left unchanged.
   //
   class LIBPROTOBUF_SYMEXPORT istreambuf: public std::streambuf
   {
   public:
-    // Start reading the messages from the stream, limiting their size to max
+    // Start reading messages from the stream, limiting their size to max
     // bytes.
     //
     void
@@ -56,31 +56,31 @@ namespace protobuf
     bool
     is_open () const noexcept {return is_ != nullptr;}
 
-    // Stop reading. Reading then gets nothing until the buffer is opened
-    // again.
+    // Stop reading. After that reading returns the end of stream until the
+    // buffer is reopened.
     //
     void
     close () noexcept;
 
-    // Move to the next message, skipping over what is left of the current
-    // one, and return true, or return false if the other stream ends before
-    // the next message. Throw invalid_input if the size is malformed or
-    // greater than the limit, or if the other stream ends inside the
-    // message being skipped. The buffer must be open.
+    // Skip the rest of the current message and move to the next one,
+    // returning true, or return false if the other stream ends before it.
+    // Throw invalid_input if the size is malformed or exceeds the limit or if
+    // the other stream ends inside the skipped message. The buffer must be
+    // open.
     //
     bool
     next ();
 
   protected:
-    // Read more of the current message. Throw invalid_input if the other
+    // Load more of the current message. Throw invalid_input if the other
     // stream ends inside it.
     //
     virtual int_type
     underflow () override;
 
   private:
-    // Read n bytes of the current message from the other stream into the
-    // get area. Throw invalid_input if the other stream ends first.
+    // Load n bytes of the current message into the get area. Throw
+    // invalid_input if the other stream ends before that.
     //
     void
     load (std::size_t n);
@@ -91,7 +91,7 @@ namespace protobuf
     std::istream*           is_ = nullptr;
     std::size_t             max_;
     std::size_t             read_;     // Bytes read from the other stream.
-    std::size_t             position_; // Of the current message's size.
+    std::size_t             position_; // Position of the message size.
     std::size_t             left_;     // Bytes of the message not loaded.
     std::unique_ptr<char[]> buf_;      // Get area.
   };
@@ -116,9 +116,9 @@ namespace protobuf
   //   ... // Invalid stream, see e.what () for the description.
   // }
   //
-  // The badbit exception must be enabled, since the faults in the other
-  // stream and the errors of its buffer come through as exceptions that the
-  // stream only rethrows with badbit enabled.
+  // The badbit exception must be enabled since the faults in the other
+  // stream (as well as the errors of its buffer) are thrown as exceptions,
+  // which the stream only rethrows if badbit is enabled.
   //
   class LIBPROTOBUF_SYMEXPORT istream: public std::istream
   {
@@ -145,9 +145,9 @@ namespace protobuf
     void
     close () noexcept {buf_.close ();}
 
-    // Move to the next message and clear the stream state, which reading
-    // the previous message to its end has set (see istreambuf::next() for
-    // details).
+    // Move to the next message (see istreambuf::next() for details) and
+    // clear the stream state, which is set by reading the previous message
+    // to its end.
     //
     bool
     next ();
@@ -158,23 +158,21 @@ namespace protobuf
 
   // Stream buffer that writes delimited messages to another stream.
   //
-  // After next() has begun a message, what is written to the buffer makes
-  // up that message, which is written to the other stream preceded by its
-  // size once the next message begins or the buffer is closed. So we keep
-  // the whole message in memory until then.
+  // After next() begins a message, the data written to the buffer becomes
+  // its contents. Since the size must precede the message, we keep the
+  // whole message in memory and write it to the other stream when the next
+  // message begins or the buffer is closed.
   //
-  // Note that syncing the buffer does nothing, since the size of a message
-  // must be written before it.
+  // Note that syncing the buffer does nothing for the same reason.
   //
   class LIBPROTOBUF_SYMEXPORT ostreambuf: public std::streambuf
   {
   public:
-    // Start writing the messages to the stream.
+    // Start writing messages to the stream.
     //
-    // The buffer must not be open, since we would otherwise abandon the
-    // message that it is writing. And the stream must have the badbit and
-    // failbit exceptions enabled, since that is how we learn that a write
-    // failed.
+    // The buffer must not be open since we would otherwise abandon the
+    // message being written. The stream must have the badbit and failbit
+    // exceptions enabled since that's how we detect write failures.
     //
     void
     open (std::ostream&);
@@ -182,28 +180,28 @@ namespace protobuf
     bool
     is_open () const noexcept {return os_ != nullptr;}
 
-    // Write the current message, if any, to the other stream and begin the
-    // next one. The buffer must be open.
+    // Write the current message, if any, and begin the next one. The buffer
+    // must be open.
     //
     void
     next ();
 
-    // Write the current message, if any, to the other stream and stop
-    // writing. Close the buffer even if this fails, since the message cannot
-    // be written then.
+    // Write the current message, if any, and stop writing. The buffer is
+    // closed even if writing fails since the message cannot be completed in
+    // this case.
     //
     void
     close ();
 
   protected:
-    // Fail unless a message has begun, since what is written outside of a
-    // message would be lost.
+    // Fail unless a message has been begun since what is written outside of
+    // a message would be lost.
     //
     virtual int_type
     overflow (int_type) override;
 
   private:
-    // Write the current message preceded by its size to the other stream.
+    // Write the current message preceded by its size.
     //
     void
     save ();
@@ -212,8 +210,8 @@ namespace protobuf
     static constexpr std::size_t buffer_size = 16384;
 
     std::ostream*           os_ = nullptr;
-    bool                    begun_;   // Whether a message has begun.
-    std::string             message_; // Current message without put area.
+    bool                    begun_;   // True if a message has been begun.
+    std::string             message_; // Message so far, except put area.
     std::unique_ptr<char[]> buf_;     // Put area.
   };
 
@@ -233,10 +231,10 @@ namespace protobuf
   // os.close ();
   // ofs.close ();
   //
-  // Note that close() must be called explicitly, since the last message is
-  // only written once it has been. So the stream must not be open when it
-  // is destroyed, unless it is no longer good or an exception is in flight,
-  // in which case the message is lost anyway.
+  // Note that close() must be called explicitly since that's when the last
+  // message is written. As a result, the stream must be closed before it is
+  // destroyed unless it is no longer good or there is an exception in
+  // flight, in which case the message is lost anyway.
   //
   class LIBPROTOBUF_SYMEXPORT ostream: public std::ostream
   {

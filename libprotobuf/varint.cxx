@@ -32,7 +32,7 @@ namespace protobuf
 
       const uint64_t b (static_cast<uint8_t> (s[p++]));
 
-      if (shift == 63 && b > 1)
+      if (shift == 63 && b > 1) // Tenth byte only has room for bit 63.
         return varint_status::overflow;
 
       v |= (b & 0x7f) << shift;

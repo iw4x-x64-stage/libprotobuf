@@ -33,13 +33,13 @@ using namespace protobuf;
 
 namespace
 {
-  // Value of a packable schema type, as the driver reads it.
+  // Scalar value type that the driver parses.
   //
   template <typename T>
   concept scalar = integral<T> || floating_point<T>;
 
-  // Return the value that the text spells. Booleans are spelled true and
-  // false.
+  // Parse the text as a value of the type (booleans are spelled true and
+  // false).
   //
   template <scalar T>
   T
@@ -62,8 +62,8 @@ namespace
     }
   }
 
-  // Return the bytes that the hex digits make up, repeated n times if the
-  // digits are followed by *<n>.
+  // Decode the hex digits, repeating the bytes n times if the digits are
+  // followed by *<n>.
   //
   string
   parse_hex (string_view s)
@@ -119,8 +119,8 @@ namespace
     return r;
   }
 
-  // Write the field with the value, or the packed field with the values,
-  // through the serializer function of the type.
+  // Write the field (or packed field), parsing the value(s) and calling the
+  // serializer function of the type.
   //
   template <scalar T, void (serializer::*F) (uint32_t, T)>
   void

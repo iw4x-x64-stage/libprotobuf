@@ -19,19 +19,18 @@ namespace protobuf
 {
   namespace
   {
-    // We write floating point values as their IEEE 754 bits.
+    // Floating point values are written as their IEEE 754 representation.
     //
     static_assert (numeric_limits<float>::is_iec559 &&
                    numeric_limits<double>::is_iec559,
                    "float and double must be IEEE 754 binary32 and binary64");
 
-    // Value that a packed field can hold, which is any scalar except for
-    // string and bytes.
+    // Packed field element type (any scalar other than string and bytes).
     //
     template <typename T>
     concept packable = integral<T> || floating_point<T>;
 
-    // Append the lower n bytes of the value, least significant first.
+    // Append the lower n bytes of the value in the little-endian order.
     //
     void
     append_fixed (string& s, uint64_t v, size_t n)
@@ -46,7 +45,8 @@ namespace protobuf
       s.append (b, n);
     }
 
-    // Append the key of the field.
+    // Append the field key. The field number must be in the [1, max_field]
+    // range.
     //
     void
     append_key (string& s, uint32_t f, wire_type t)
@@ -57,8 +57,9 @@ namespace protobuf
                         static_cast<uint64_t> (t));
     }
 
-    // Append the value as the wire type says, which must be varint, i32, or
-    // i64. For the latter two the value holds the bits of the field.
+    // Append the value encoded according to the wire type, which must be
+    // varint, i32, or i64. For the fixed-size types the value contains the
+    // field bits.
     //
     void
     append_value (string& s, wire_type t, uint64_t v)
@@ -72,9 +73,9 @@ namespace protobuf
       }
     }
 
-    // Write the length of everything after the byte at the position into
-    // that byte, which was set aside for it. If the length doesn't fit into
-    // a single byte, then insert the bytes that it takes in addition.
+    // Write the length of the data that follows the byte at the position
+    // into that byte, which was reserved for it. If the length needs more
+    // than one byte, then insert the rest after it, moving the data.
     //
     void
     patch_length (string& s, size_t p)
@@ -86,15 +87,15 @@ namespace protobuf
       s.replace (p, 1, l);
     }
 
-    // Value of each schema type as the integer that goes on the wire. Note
-    // that the conversions of negative values to unsigned are modular and so
-    // keep the two's complement bits.
+    // Encode the value of each schema type as the wire integer. Note that
+    // converting a negative value to an unsigned type is modular and so
+    // preserves its two's complement representation.
     //
     uint64_t
     encode_int32 (int32_t v)
     {
-      // Sign-extend to 64 bits, as the encoding requires, so that a parser
-      // that reads the field as int64 gets the same value.
+      // Sign-extend to 64 bits as required by the encoding. This way the
+      // value stays the same if the field is changed to int64.
       //
       return static_cast<uint64_t> (static_cast<int64_t> (v));
     }
@@ -117,10 +118,10 @@ namespace protobuf
       return v;
     }
 
-    // ZigZag maps the signed values onto the unsigned ones alternately (0
-    // to 0, -1 to 1, 1 to 2, -2 to 3, etc), so that small magnitudes of
-    // either sign make small varints. The right shift of a signed value is
-    // arithmetic and so yields all ones for a negative value.
+    // ZigZag maps signed values to unsigned, alternating between positive
+    // and negative (0 to 0, -1 to 1, 1 to 2, -2 to 3, etc), so that values
+    // with a small magnitude produce short varints. Note that shifting a
+    // negative value right is arithmetic and so produces all ones.
     //
     uint64_t
     encode_sint32 (int32_t v)
@@ -176,8 +177,8 @@ namespace protobuf
       return bit_cast<uint64_t> (v);
     }
 
-    // Append the packed field with the elements, each encoded with the
-    // function and written as the wire type.
+    // Append the packed field, encoding each element with the function and
+    // writing it according to the wire type.
     //
     template <packable T>
     void
@@ -212,8 +213,8 @@ namespace protobuf
   bool serializer::
   invariant () const noexcept
   {
-    // The scopes are nested and so begin in the order of the output, with
-    // the innermost one inside what has been written so far.
+    // Scopes are nested and so their positions are ascending, with the
+    // innermost within what has been written so far.
     //
     return ranges::is_sorted (scopes_, {}, &scope::position) &&
            (scopes_.empty () || scopes_.back ().position <= out_.size ());
@@ -360,10 +361,10 @@ namespace protobuf
   {
     LIBPROTOBUF_INVARIANT (invariant ());
 
-    // Check that the value is well-formed UTF-8 as RFC 3629 defines it,
-    // which is when U8_NEXT() decodes every character to a non-negative
-    // value. ICU documents the offset as int32_t, but the macro works with
-    // any integer type and so we give it our size_t.
+    // Make sure the value is valid UTF-8 (RFC 3629) before writing anything.
+    // U8_NEXT() yields a negative value for an ill-formed sequence. Note that
+    // while ICU documents the offset as int32_t, the macro works with any
+    // integer type.
     //
     const uint8_t* p (reinterpret_cast<const uint8_t*> (v.data ()));
 
@@ -484,7 +485,7 @@ namespace protobuf
 
     append_key (out_, f, wire_type::len);
 
-    // Set the length byte aside (see patch_length() for details).
+    // Reserve the length byte (see patch_length() for details).
     //
     scopes_.push_back (scope {wire_type::len, f, out_.size ()});
     out_ += '\0';

@@ -18,20 +18,19 @@ namespace protobuf
 {
   namespace
   {
-    // We read floating point values as their IEEE 754 bits.
+    // Floating point values are read as their IEEE 754 representation.
     //
     static_assert (numeric_limits<float>::is_iec559 &&
                    numeric_limits<double>::is_iec559,
                    "float and double must be IEEE 754 binary32 and binary64");
 
-    // Value that a packed field can hold, which is any scalar except for
-    // string and bytes.
+    // Packed field element type (any scalar other than string and bytes).
     //
     template <typename T>
     concept packable = integral<T> || floating_point<T>;
 
-    // Read the n little-endian bytes at the position and move the position
-    // past them. Return false if there are fewer than n bytes left.
+    // Read n little-endian bytes at the position, advancing it past them.
+    // Return false if there are fewer than n bytes left.
     //
     bool
     read_fixed (string_view s, size_t& p, size_t n, uint64_t& v) noexcept
@@ -49,9 +48,9 @@ namespace protobuf
       return true;
     }
 
-    // Read the value of the varint, i32, or i64 field at the position and
-    // move the position past it. Throw invalid_input with the key position
-    // and the field number if the value is malformed.
+    // Read the varint, i32, or i64 value at the position, advancing it past
+    // the value. Throw invalid_input with the key position and the field
+    // number if the value is malformed.
     //
     uint64_t
     read_value (string_view s,
@@ -96,9 +95,9 @@ namespace protobuf
       return r;
     }
 
-    // Field as read from the input. The value of a len field is the view of
-    // its bytes and of a varint, i32, or i64 field the integer. A group key
-    // has no value.
+    // Field read from the input. For a len field the value is a view of its
+    // bytes and for the other wire types it is the integer. Group keys have
+    // no value.
     //
     struct field_value
     {
@@ -109,9 +108,9 @@ namespace protobuf
       string_view bytes;
     };
 
-    // Read the field at the position and move the position past it. The
-    // positions in the exceptions are offset by the base. Throw
-    // invalid_input if the field is malformed.
+    // Read the field at the position, advancing it past the field. Throw
+    // invalid_input if the field is malformed, offsetting the position in the
+    // exception by the base.
     //
     field_value
     read_field (string_view s, size_t& p, size_t base)
@@ -119,8 +118,8 @@ namespace protobuf
       field_value r {p, 0, wire_type::varint};
       const size_t kp (base + p);
 
-      // Read the key and split it into the field number and the wire type,
-      // which are 29 and 3 bits of a 32-bit integer.
+      // Read the key and split it into the field number (upper 29 bits) and
+      // the wire type (lower 3 bits).
       //
       uint64_t k;
       switch (read_varint (s, p, k))
@@ -149,7 +148,8 @@ namespace protobuf
 
       r.type = static_cast<wire_type> (t);
 
-      // Read the value.
+      // Read the value. Group keys have none (see parser::next() for how we
+      // find the group end).
       //
       switch (r.type)
       {
@@ -162,8 +162,8 @@ namespace protobuf
         }
         case wire_type::len:
         {
-          // A length that the input cannot hold is incomplete, however
-          // large, which also takes care of the lengths beyond size_t.
+          // Treat a length that exceeds the rest of the input as incomplete.
+          // This also covers the lengths that don't fit into size_t.
           //
           uint64_t n;
           switch (read_varint (s, p, n))
@@ -194,9 +194,9 @@ namespace protobuf
       return r;
     }
 
-    // Integer on the wire as the value of each schema type. Note that the
-    // conversions to a narrower or signed type are modular and so keep the
-    // lower bits, which is the truncation that the encoding requires.
+    // Decode the wire integer as each schema type. Note that converting to a
+    // narrower or signed type is modular and so keeps the lower bits, which
+    // is the truncation required by the encoding.
     //
     int32_t
     decode_int32 (uint64_t v)
@@ -222,8 +222,9 @@ namespace protobuf
       return v;
     }
 
-    // Undo the ZigZag mapping (see the serializer for details): the low bit
-    // is the sign and the rest the magnitude, inverted for a negative value.
+    // Undo the ZigZag encoding (see the serializer for details): the lowest
+    // bit is the sign and the rest is the magnitude, inverted for negative
+    // values.
     //
     int32_t
     decode_sint32 (uint64_t v)
@@ -280,10 +281,10 @@ namespace protobuf
       return bit_cast<double> (v);
     }
 
-    // Append the value of the current field of the repeated scalar type to
-    // the vector (see parser for details). The type's elements are of the
-    // wire type, read with the function from the parser and decoded with the
-    // function from a packed field.
+    // Append the current field's value to the vector (see parser for
+    // details). An unpacked value is read with the parser function and the
+    // packed elements are read as the wire type and decoded with the decode
+    // function.
     //
     template <packable T>
     void
@@ -304,7 +305,8 @@ namespace protobuf
         return;
       }
 
-      // Read the packed elements.
+      // Otherwise, this is a packed field with the elements one after
+      // another.
       //
       const string_view s (p.bytes ());
 
@@ -337,8 +339,9 @@ namespace protobuf
     field_value f (read_field (input_, next_, base_));
 
     // Find the end of a group, which is the egroup key that brings the
-    // nesting back to where the group began. Each nested group is checked
-    // as it is parsed, if ever, so here we only count the levels.
+    // nesting level back to zero. Here we only count the levels and verify
+    // that the end matches the start. The nested groups are verified if and
+    // when they are parsed (see group()).
     //
     switch (f.type)
     {

@@ -18,13 +18,12 @@ namespace protobuf
 {
   // Message serializer.
   //
-  // Call the function of each field's schema type, in the order in which
-  // the fields should appear, with the field number and the value. Write a
-  // repeated field by calling the function once per element or, if the
-  // schema packs the field, once with all the elements (the packed_*()
-  // functions). Write a nested message between begin_message() and
-  // end_message() and a group between begin_group() and end_group(). For
-  // example:
+  // For each field call the function of its schema type passing the field
+  // number and the value. The fields are written in the order of the calls.
+  // A repeated field is written by calling the function for each element or,
+  // if the field is packed, by calling the packed_*() function once. A
+  // nested message is written between begin_message() and end_message() and
+  // a group between begin_group() and end_group(). For example:
   //
   // string m;
   // serializer s (m);
@@ -38,11 +37,11 @@ namespace protobuf
   // s.float64 (2, y);
   // s.end_message ();
   //
-  // The field number must be between 1 and max_field. Every message and
-  // group that is begun must be ended before the result is used, since
-  // end_message() is what writes the length of the message.
+  // The field number must be in the [1, max_field] range. All the messages
+  // and groups must be ended before the result is used since the message
+  // length is only written by end_message().
   //
-  // The schema types map onto the wire types and C++ types as follows:
+  // The schema types are mapped to the wire types as follows:
   //
   // int32, int64       varint, two's complement (negative values take ten
   //                    bytes)
@@ -56,17 +55,17 @@ namespace protobuf
   //                    (float32() and float64())
   // string, bytes      len
   //
-  // The string() function throws invalid_output before writing anything.
-  // Any other exception, such as std::bad_alloc, can leave part of a field
-  // in the string, which then cannot be used as a message.
+  // If string() throws invalid_output, then nothing has been written. If
+  // any other exception is thrown (std::bad_alloc, for example), then the
+  // string may end with a partially written field and should be discarded.
   //
-  // Note that the serializer refers to the string, which must therefore
-  // outlive it.
+  // Note that the serializer keeps a reference to the string, which should
+  // therefore outlive it.
   //
   class LIBPROTOBUF_SYMEXPORT serializer
   {
   public:
-    // Serialize into the string, appending to what it already holds.
+    // Append the message to the string.
     //
     explicit
     serializer (std::string&);
@@ -79,7 +78,7 @@ namespace protobuf
 
     // Scalar fields.
     //
-    // Write the field with the value as the schema type.
+    // Write the field encoding the value as the corresponding schema type.
     //
     void
     int32 (std::uint32_t field, std::int32_t);
@@ -127,19 +126,19 @@ namespace protobuf
     bytes (std::uint32_t field, std::string_view);
 
     // As bytes() but throw invalid_output if the value is not valid UTF-8,
-    // which a string is required to be.
+    // as required for the string type.
     //
     void
     string (std::uint32_t field, std::string_view);
 
     // Packed repeated fields.
     //
-    // Write the elements as one field with the values one after another.
-    // If there are no elements, then write nothing, since an empty packed
-    // field adds no elements to the repeated field.
+    // Write the elements as a single len field. If there are no elements,
+    // then write nothing since an empty packed field would not add anything
+    // to the repeated field.
     //
-    // Note that std::vector<bool> doesn't store its elements contiguously
-    // and so has to be copied into an array of bool for packed_boolean().
+    // Note that std::vector<bool> is not contiguous and so has to be copied
+    // into an array of bool to be passed to packed_boolean().
     //
     void
     packed_int32 (std::uint32_t field, std::span<const std::int32_t>);
@@ -185,14 +184,13 @@ namespace protobuf
 
     // Nested messages and groups.
     //
-    // Begin the field and write the fields that follow into it until the
-    // matching end call. Messages and groups nest to any depth. The end call
-    // must match the innermost begin call that has not been ended yet.
+    // Begin the field and write the subsequent fields into it until the
+    // matching end call, which must be for the innermost field that has not
+    // yet been ended. Messages and groups can be nested to any depth.
     //
-    // Note that we only learn the length of a message at its end, which is
-    // where we write it. Up to 127 bytes of message, the length takes the
-    // byte that we set aside for it. A longer message is moved to make room
-    // for the longer length.
+    // Note that the length of a message is only known at its end. So we
+    // reserve one byte for it, which is enough for up to 127 bytes, and move
+    // the message contents if the length turns out to need more.
     //
     void
     begin_message (std::uint32_t field);
@@ -214,9 +212,9 @@ namespace protobuf
     //
     struct scope
     {
-      wire_type     type;     // Wire type of the field's key.
+      wire_type     type;     // len for message, sgroup for group.
       std::uint32_t field;
-      std::size_t   position; // Position of the field's value in out_.
+      std::size_t   position; // Value position in out_.
     };
 
     std::string&       out_;

@@ -31,7 +31,7 @@ using namespace protobuf;
 
 namespace
 {
-  // Return the number that the text spells.
+  // Parse the text as a size.
   //
   size_t
   parse_size (string_view s)
@@ -45,8 +45,8 @@ namespace
     return r;
   }
 
-  // Return the bytes that the whitespace-separated words of hex digits make
-  // up, each word optionally followed by *<n> to repeat its bytes n times.
+  // Decode the whitespace-separated words of hex digits, repeating a word's
+  // bytes n times if it is followed by *<n>.
   //
   string
   from_hex (string_view s)
@@ -195,8 +195,8 @@ main (int argc, char* argv[])
   istringstream is (from_hex (h));
   is.exceptions (istringstream::badbit);
 
-  // Print the messages only once the whole stream is read, so that a
-  // failure only has the diagnostics.
+  // Only print the messages once the whole stream is read so that on
+  // failure the output only contains the diagnostics.
   //
   string r;
 

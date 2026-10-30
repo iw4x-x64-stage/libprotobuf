@@ -8,35 +8,35 @@
 #include <cstdint> // uint64_t
 #include <string_view>
 
-// Varint coding, which is internal to the library (see the buildfile for
-// details).
+// Varint encoding and decoding. This is an implementation detail that is
+// not installed (see the buildfile for details).
 //
 namespace protobuf
 {
-  // Largest size of a varint, in bytes.
+  // Maximum varint size in bytes, which is what 64 bits take at 7 bits per
+  // byte.
   //
   inline constexpr std::size_t max_varint (10);
 
-  // Append the value as a varint.
+  // Append the value to the string as a varint.
   //
   void
   append_varint (std::string&, std::uint64_t);
 
-  // Outcome of reading a varint.
+  // Result of read_varint().
   //
   enum class varint_status
   {
     complete,
-    incomplete, // Input ends before the last byte.
-    overflow    // More than 64 bits.
+    incomplete, // Input ends inside the varint.
+    overflow    // Value does not fit into 64 bits.
   };
 
-  // Read the varint at the position into the value and move the position
-  // past it.
+  // Decode the varint that starts at the position in the input into the
+  // value, advancing the position past it.
   //
-  // A varint takes at most ten bytes, of which the tenth holds bit 63
-  // alone. Note that we accept the redundant forms with high zero groups
-  // (80 00 for 0, say), which the encoding allows.
+  // Note that we accept the non-minimal encodings (80 00 for 0, say), which
+  // the encoding specification allows.
   //
   varint_status
   read_varint (std::string_view,

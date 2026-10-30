@@ -44,16 +44,17 @@ namespace protobuf
   {
     LIBPROTOBUF_PRE (is_open ());
 
-    // Skip over what is left of the current message, the part in the get
-    // area and the part still in the other stream.
+    // Skip the rest of the current message, loading and discarding the part
+    // that is still in the other stream.
     //
     while (left_ != 0)
       load (min (left_, buffer_size));
 
     setg (buf_.get (), buf_.get (), buf_.get ());
 
-    // Read the size. We cannot tell its length up front, so we take a byte
-    // at a time up to the last one or to the longest that a varint can be.
+    // Read the size a byte at a time since we don't know its length in
+    // advance. Stop at the last byte or at the maximum varint length,
+    // leaving it to read_varint() to diagnose the latter.
     //
     position_ = read_;
 
@@ -111,8 +112,8 @@ namespace protobuf
   {
     LIBPROTOBUF_PRE (n != 0 && n <= left_ && n <= buffer_size);
 
-    // Note that we only read the bytes of the current message, since what
-    // follows it in the other stream is not ours to take yet.
+    // Note that we must not read past the current message since the caller
+    // may stop after any message and continue reading the other stream.
     //
     const size_t r (static_cast<size_t> (
       is_->rdbuf ()->sgetn (buf_.get (), static_cast<streamsize> (n))));
@@ -170,7 +171,8 @@ namespace protobuf
     begun_ = false;
     message_.clear ();
 
-    // There is no message to write into until next() begins one.
+    // Leave the put area empty until next() begins a message (see
+    // overflow()).
     //
     setp (nullptr, nullptr);
   }
@@ -194,8 +196,8 @@ namespace protobuf
     if (!is_open ())
       return;
 
-    // If writing the message fails, then there is no getting back to a
-    // consistent state, so close the buffer either way.
+    // If writing the message fails, then the buffer cannot be brought back
+    // to a consistent state, so close it regardless.
     //
     try
     {
@@ -219,7 +221,7 @@ namespace protobuf
     if (!is_open () || !begun_)
       return traits_type::eof ();
 
-    // Move the put area to the message and start it over.
+    // Append the put area contents to the message and reset it.
     //
     message_.append (pbase (), static_cast<size_t> (pptr () - pbase ()));
     setp (buf_.get (), buf_.get () + buffer_size);
