@@ -1,0 +1,6 @@
+$out_root/
+{
+  include libprotobuf/
+}
+
+export $out_root/libprotobuf/$import.target

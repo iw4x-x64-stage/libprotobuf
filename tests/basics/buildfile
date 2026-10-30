@@ -1,0 +1,3 @@
+import libs = libprotobuf%lib{protobuf}
+
+exe{driver}: {hxx ixx txx cxx}{**} $libs testscript{**}
