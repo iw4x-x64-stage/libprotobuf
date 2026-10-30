@@ -49,7 +49,7 @@ else
   install.subdirs = true
 }
 
-# The UTF-8 validation is internal: no public header includes it and so it
-# stays out of the installed headers.
+# The UTF-8 validation and the varint coding are internal: no public header
+# includes them and so they stay out of the installed headers.
 #
-hxx{utf8}@./: install = false
+hxx{utf8}@./ hxx{varint}@./: install = false

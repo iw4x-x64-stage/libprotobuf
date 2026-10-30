@@ -8,6 +8,7 @@
 #include <concepts> // integral, floating_point
 
 #include <libprotobuf/utf8.hxx>
+#include <libprotobuf/varint.hxx>
 #include <libprotobuf/contract.hxx>
 
 using namespace std;
@@ -27,44 +28,6 @@ namespace protobuf
     //
     template <typename T>
     concept packable = integral<T> || floating_point<T>;
-
-    // Outcome of reading a varint.
-    //
-    enum class varint_status
-    {
-      complete,
-      incomplete, // Input ends before the last byte.
-      overflow    // More than 64 bits.
-    };
-
-    // Read the varint at the position into the value and move the position
-    // past it.
-    //
-    // A varint takes at most ten bytes, of which the tenth holds bit 63
-    // alone. Note that we accept the redundant forms with high zero groups
-    // (80 00 for 0, say), which the encoding allows.
-    //
-    varint_status
-    read_varint (string_view s, size_t& p, uint64_t& v) noexcept
-    {
-      v = 0;
-
-      for (unsigned shift (0);; shift += 7)
-      {
-        if (p == s.size ())
-          return varint_status::incomplete;
-
-        const uint64_t b (static_cast<uint8_t> (s[p++]));
-
-        if (shift == 63 && b > 1)
-          return varint_status::overflow;
-
-        v |= (b & 0x7f) << shift;
-
-        if ((b & 0x80) == 0)
-          return varint_status::complete;
-      }
-    }
 
     // Read the n little-endian bytes at the position and move the position
     // past them. Return false if there are fewer than n bytes left.

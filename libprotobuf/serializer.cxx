@@ -9,6 +9,7 @@
 #include <algorithm> // ranges::is_sorted()
 
 #include <libprotobuf/utf8.hxx>
+#include <libprotobuf/varint.hxx>
 #include <libprotobuf/contract.hxx>
 
 using namespace std;
@@ -28,21 +29,6 @@ namespace protobuf
     //
     template <typename T>
     concept packable = integral<T> || floating_point<T>;
-
-    // Append the value as a varint.
-    //
-    void
-    append_varint (string& s, uint64_t v)
-    {
-      char b[10];
-      size_t n (0);
-
-      for (; v >= 0x80; v >>= 7)
-        b[n++] = static_cast<char> ((v & 0x7f) | 0x80);
-
-      b[n++] = static_cast<char> (v);
-      s.append (b, n);
-    }
 
     // Append the lower n bytes of the value, least significant first.
     //
