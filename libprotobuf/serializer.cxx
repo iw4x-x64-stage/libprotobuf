@@ -19,7 +19,9 @@ namespace protobuf
 {
   namespace
   {
-    // Floating point values are written as their IEEE 754 representation.
+    // We write floating point values as their raw bits, which the encoding
+    // specifies in the IEEE 754 format. So make sure that's what float and
+    // double are.
     //
     static_assert (numeric_limits<float>::is_iec559 &&
                    numeric_limits<double>::is_iec559,
@@ -118,10 +120,12 @@ namespace protobuf
       return v;
     }
 
-    // ZigZag maps signed values to unsigned, alternating between positive
-    // and negative (0 to 0, -1 to 1, 1 to 2, -2 to 3, etc), so that values
-    // with a small magnitude produce short varints. Note that shifting a
-    // negative value right is arithmetic and so produces all ones.
+    // Encode the value with ZigZag, which interleaves the negative and the
+    // positive values (0 to 0, -1 to 1, 1 to 2, -2 to 3, etc) so that the
+    // values with a small magnitude produce short varints.
+    //
+    // Note that shifting a negative value right is arithmetic and so gives
+    // us all ones to flip the magnitude bits with.
     //
     uint64_t
     encode_sint32 (int32_t v)
@@ -193,6 +197,8 @@ namespace protobuf
 
       append_key (s, f, wire_type::len);
 
+      // Reserve the length byte (see patch_length() for details).
+      //
       const size_t p (s.size ());
       s += '\0';
 

@@ -18,7 +18,8 @@ namespace protobuf
 {
   namespace
   {
-    // Floating point values are read as their IEEE 754 representation.
+    // As in the serializer, we read floating point values as their raw bits
+    // and so float and double must be in the IEEE 754 format.
     //
     static_assert (numeric_limits<float>::is_iec559 &&
                    numeric_limits<double>::is_iec559,
@@ -222,9 +223,9 @@ namespace protobuf
       return v;
     }
 
-    // Undo the ZigZag encoding (see the serializer for details): the lowest
-    // bit is the sign and the rest is the magnitude, inverted for negative
-    // values.
+    // Decode the ZigZag value (see encode_sint32() in the serializer). The
+    // lowest bit is the sign and the rest is the magnitude, which we flip
+    // back if the value is negative.
     //
     int32_t
     decode_sint32 (uint64_t v)
@@ -338,10 +339,13 @@ namespace protobuf
 
     field_value f (read_field (input_, next_, base_));
 
-    // Find the end of a group, which is the egroup key that brings the
-    // nesting level back to zero. Here we only count the levels and verify
-    // that the end matches the start. The nested groups are verified if and
-    // when they are parsed (see group()).
+    // If this is a group, then scan its fields to find its end, which is the
+    // egroup key that brings the nesting level back to zero. Here we only
+    // count the levels and check that the end matches the start. The nested
+    // groups are checked if and when they are parsed (see group()).
+    //
+    // Note that since we step over each group as a whole, an egroup key can
+    // only get here if there is no sgroup that it ends.
     //
     switch (f.type)
     {

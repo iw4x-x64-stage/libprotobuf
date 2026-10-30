@@ -218,8 +218,8 @@ namespace
 int
 main (int argc, char* argv[])
 {
-  // Switch stdout to the binary mode, since on Windows the text mode would
-  // turn the line ending into CRLF.
+  // Switch stdout to binary mode since on Windows we would otherwise get
+  // CRLF line endings, which the expected output doesn't have.
   //
 #ifdef _WIN32
   _setmode (_fileno (stdout), _O_BINARY);
