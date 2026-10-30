@@ -44,3 +44,8 @@ else
   install         = include/libprotobuf/
   install.subdirs = true
 }
+
+# The UTF-8 validation is internal: no public header includes it and so it
+# stays out of the installed headers.
+#
+hxx{utf8}@./: install = false

@@ -1,0 +1,262 @@
+# Copyright (c) the IW4x authors (see the AUTHORS file).
+# SPDX-License-Identifier: GPL-3.0-only WITH AdditionRef-IW4x-Exception-1.1
+
+# The expected messages are in hex. Each field starts with its key, which is
+# the field number shifted left by three bits with the wire type in the low
+# three bits. So 08 is field 1 as varint, 0d field 1 as i32, 09 field 1 as
+# i64, 0a field 1 as len, 12 field 2 as len, 1a field 3 as len, and 22 field
+# 4 as len.
+
+: varint
+: Varint values of the integer schema types
+:
+{{
+  $* <'1 uint64 0'                    >'0800'                   : zero
+  $* <'1 uint64 150'                  >'089601'                 : uint64
+  $* <'1 uint64 18446744073709551615' >'08ffffffffffffffffff01' : uint64-max
+  $* <'1 uint32 4294967295'           >'08ffffffff0f'           : uint32-max
+  $* <'1 int32 2147483647'            >'08ffffffff07'           : int32-max
+  $* <'1 int64 -1'                    >'08ffffffffffffffffff01' : int64-negative
+  $* <'1 enumeration 2'               >'0802'                   : enumeration
+
+  : int32-negative
+  : Negative int32 sign-extended to 64 bits
+  :
+  $* <'1 int32 -1' >'08ffffffffffffffffff01'
+
+  : enumeration-negative
+  : Negative enumeration sign-extended to 64 bits, as int32
+  :
+  $* <'1 enumeration -2' >'08feffffffffffffffff01'
+}}
+
+: zigzag
+: ZigZag values of the sint32 and sint64 schema types
+:
+{{
+  $* <'1 sint32 0'                    >'0800'                   : zero
+  $* <'1 sint32 -1'                   >'0801'                   : minus-one
+  $* <'1 sint32 1'                    >'0802'                   : one
+  $* <'1 sint32 -2'                   >'0803'                   : minus-two
+  $* <'1 sint32 2147483647'           >'08feffffff0f'           : sint32-max
+  $* <'1 sint32 -2147483648'          >'08ffffffff0f'           : sint32-min
+  $* <'1 sint64 9223372036854775807'  >'08feffffffffffffffff01' : sint64-max
+  $* <'1 sint64 -9223372036854775808' >'08ffffffffffffffffff01' : sint64-min
+}}
+
+: boolean
+:
+{{
+  $* <'1 boolean true'  >'0801' : true
+  $* <'1 boolean false' >'0800' : false
+}}
+
+: fixed
+: Little-endian values of the fixed-size schema types
+:
+{{
+  $* <'1 fixed32 1'          >'0d01000000'         : fixed32
+  $* <'1 fixed32 4294967295' >'0dffffffff'         : fixed32-max
+  $* <'1 sfixed32 -2'        >'0dfeffffff'         : sfixed32
+  $* <'1 fixed64 1'          >'090100000000000000' : fixed64
+  $* <'1 sfixed64 -2'        >'09feffffffffffffff' : sfixed64
+  $* <'1 float32 1.5'        >'0d0000c03f'         : float32
+  $* <'1 float64 -2.5'       >'0900000000000004c0' : float64
+  $* <'1 float32 inf'        >'0d0000807f'         : float32-infinity
+
+  : float32-negative-zero
+  : Negative zero with its sign bit
+  :
+  $* <'1 float32 -0' >'0d00000080'
+}}
+
+: len
+: Length-delimited values of the bytes and string schema types
+:
+{{
+  $* <'2 bytes 74657374696e67' >'120774657374696e67' : bytes
+  $* <'2 bytes'                >'1200'               : bytes-empty
+  $* <'2 bytes c0af'           >'1202c0af'           : bytes-binary
+  $* <'2 bytes 61*127'         >~'/127f(61){127}/'   : bytes-127
+
+  : bytes-128
+  : Value whose length takes two bytes
+  :
+  $* <'2 bytes 61*128' >~'/128001(61){128}/'
+}}
+
+: string
+: UTF-8 values of the string schema type
+:
+{{
+  $* <'2 string 74657374' >'120474657374' : ascii
+  $* <'2 string'          >'1200'         : empty
+  $* <'2 string c3a9'     >'1202c3a9'     : two-byte
+  $* <'2 string e0a080'   >'1203e0a080'   : three-byte-min
+  $* <'2 string ed9fbf'   >'1203ed9fbf'   : surrogate-below
+  $* <'2 string f09f9880' >'1204f09f9880' : four-byte
+  $* <'2 string f48fbfbf' >'1204f48fbfbf' : four-byte-max
+
+  : invalid
+  : Bytes that are not UTF-8
+  :
+  {{
+    e = 'error: invalid UTF-8 in string field 2'
+
+    $* <'2 string c0af'     2>"$e" != 0 : overlong-two
+    $* <'2 string e09f80'   2>"$e" != 0 : overlong-three
+    $* <'2 string f08f8080' 2>"$e" != 0 : overlong-four
+    $* <'2 string eda080'   2>"$e" != 0 : surrogate
+    $* <'2 string f4908080' 2>"$e" != 0 : above-max
+    $* <'2 string f5808080' 2>"$e" != 0 : lead
+    $* <'2 string 80'       2>"$e" != 0 : continuation
+    $* <'2 string c328'     2>"$e" != 0 : ascii-continuation
+    $* <'2 string 61c3'     2>"$e" != 0 : truncated
+  }}
+}}
+
+: field
+: Field numbers in the key
+:
+{{
+  $* <'15 uint32 0'        >'7800'         : one-byte-max
+  $* <'16 uint32 0'        >'800100'       : two-byte
+  $* <'536870911 uint32 0' >'f8ffffff0f00' : max
+
+  : order
+  : Fields in the order of the calls, repeated fields included
+  :
+  $* <<EOI >'08011201610802'
+  1 uint32 1
+  2 bytes 61
+  1 uint32 2
+  EOI
+}}
+
+: packed
+: Elements of packed repeated fields in one len value
+:
+{{
+  $* <'3 packed-sint32 1 -2 3'      >'1a03020306'               : sint32
+  $* <'3 packed-uint64 150 1'       >'1a03960101'               : uint64
+  $* <'3 packed-int32 -1'           >'1a0affffffffffffffffff01' : int32
+  $* <'3 packed-enumeration 1 2'    >'1a020102'                 : enumeration
+  $* <'3 packed-boolean true false' >'1a020100'                 : boolean
+  $* <'3 packed-fixed32 1 2'        >'1a080100000002000000'     : fixed32
+  $* <'3 packed-sfixed64 -2'        >'1a08feffffffffffffff'     : sfixed64
+  $* <'3 packed-float32 1.5'        >'1a040000c03f'             : float32
+  $* <'3 packed-float64 1'          >'1a08000000000000f03f'     : float64
+
+  : empty
+  : Packed field without elements, which is not written
+  :
+  $* <'3 packed-uint32' >''
+}}
+
+: message
+: Nested messages
+:
+{{
+  : field
+  :
+  $* <<EOI >'2203089601'
+  4 message
+  1 uint32 150
+  end
+  EOI
+
+  : empty
+  :
+  $* <<EOI >'2200'
+  4 message
+  end
+  EOI
+
+  : nested
+  : Message in a message
+  :
+  $* <<EOI >'22040a020801'
+  4 message
+  1 message
+  1 uint32 1
+  end
+  end
+  EOI
+
+  : length-127
+  : Message whose length fits into the byte set aside for it
+  :
+  $* <<EOI >~'/227f0a7d(61){125}2801/'
+  4 message
+  1 bytes 61*125
+  end
+  5 uint32 1
+  EOI
+
+  : length-128
+  : Message moved to make room for its two-byte length
+  :
+  $* <<EOI >~'/2280010a7e(61){126}2801/'
+  4 message
+  1 bytes 61*126
+  end
+  5 uint32 1
+  EOI
+
+  : length-nested
+  : Messages moved at two levels
+  :
+  $* <<EOI >~'/2283010a80010a7e(61){126}/'
+  4 message
+  1 message
+  1 bytes 61*126
+  end
+  end
+  EOI
+}}
+
+: group
+: Groups between the sgroup and egroup keys
+:
+{{
+  : field
+  :
+  $* <<EOI >'2b08012c'
+  5 group
+  1 uint32 1
+  end
+  EOI
+
+  : empty
+  :
+  $* <<EOI >'2b2c'
+  5 group
+  end
+  EOI
+
+  : message
+  : Group in a message
+  :
+  $* <<EOI >'22022b2c'
+  4 message
+  5 group
+  end
+  end
+  EOI
+}}
+
+: prefix
+: Serialize after the bytes that the string already holds
+:
+{{
+  $* --prefix 0801 <'2 uint32 1' >'08011001' : field
+
+  : message
+  : Length written at its position after the prefix
+  :
+  $* --prefix 0801 <<EOI >'080122020801'
+  4 message
+  1 uint32 1
+  end
+  EOI
+}}
