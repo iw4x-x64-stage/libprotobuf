@@ -3,7 +3,11 @@
 
 intf_libs = # Interface dependencies.
 impl_libs = # Implementation dependencies.
-#import xxxx_libs += libhello%lib{hello}
+
+# The UTF-8 validation of the string fields comes from ICU, which no public
+# header includes.
+#
+import impl_libs += libicuuc%lib{icuuc}
 
 lib{protobuf}: {hxx ixx txx cxx}{** -version} hxx{version} $impl_libs $intf_libs
 
