@@ -1,0 +1,78 @@
+# Copyright (c) the IW4x authors (see the AUTHORS file).
+# SPDX-License-Identifier: GPL-3.0-only WITH AdditionRef-IW4x-Exception-1.1
+
+# The messages and streams are in hex. In a stream each message follows its
+# size as a varint.
+
+: write
+: Write messages preceded by their size
+:
+{{
+  test.arguments += -w
+
+  $* <'089601'  >'03089601'         : message
+  $* <'61*200'  >~'/c801(61){200}/' : size-two-byte
+
+  : messages
+  : Messages one after another, an empty one included
+  :
+  $* <<EOI >'0308960100'
+  089601
+
+  EOI
+}}
+
+: read
+: Read messages up to the end of the stream
+:
+{{
+  test.arguments += -r
+
+  $* <''                                : empty
+  $* --size <'f0a204 61*70000' >'70000' : chunks
+
+  : messages
+  : Messages one after another, an empty one included
+  :
+  $* <'03089601 00' >>EOO
+  089601
+
+  EOO
+
+  : limit
+  : Message of the largest size that the limit allows
+  :
+  $* --max 4 <'04 61616161' >'61616161'
+
+  : invalid
+  : Malformed streams
+  :
+  {{
+    $* <'80'    2>'error: incomplete message size' != 0 : size-incomplete
+    $* <'ff*10' 2>'error: invalid message size'    != 0 : size-invalid
+    $* <'0361'  2>'error: incomplete message'      != 0 : message-incomplete
+
+    : chunks-incomplete
+    : Message that ends inside its first chunk of a larger size
+    :
+    $* <'f0a204 61*10' 2>'error: incomplete message' != 0
+
+    : limit
+    : Message larger than the limit
+    :
+    $* --max 3 <'04 61616161' 2>>EOE != 0
+    error: message size 4 greater than limit 3
+    EOE
+  }}
+}}
+
+: round-trip
+: Messages written and read back
+:
+$* -w <<EOI | $* -r >>EOO
+089601
+0a0274657374
+EOI
+089601
+0a0274657374
+EOO
