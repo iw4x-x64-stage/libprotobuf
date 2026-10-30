@@ -5,6 +5,7 @@
 
 #include <cstdint>   // uint64_t
 #include <algorithm> // min()
+#include <exception> // uncaught_exceptions()
 
 #include <libprotobuf/varint.hxx>
 #include <libprotobuf/contract.hxx>
@@ -13,45 +14,65 @@ using namespace std;
 
 namespace protobuf
 {
-  void
-  write_delimited (ostream& os, string_view m)
+  // istreambuf
+  //
+
+  void istreambuf::
+  open (std::istream& is, size_t max)
   {
-    LIBPROTOBUF_PRE ((os.exceptions () & (ostream::badbit |
-                                          ostream::failbit)) ==
-                     (ostream::badbit | ostream::failbit));
+    if (buf_ == nullptr)
+      buf_ = make_unique_for_overwrite<char[]> (buffer_size);
 
-    string s;
-    append_varint (s, m.size ());
+    is_       = &is;
+    max_      = max;
+    read_     = 0;
+    position_ = 0;
+    left_     = 0;
 
-    os.write (s.data (), static_cast<streamsize> (s.size ()));
-    os.write (m.data (), static_cast<streamsize> (m.size ()));
+    setg (buf_.get (), buf_.get (), buf_.get ());
   }
 
-  optional<string>
-  read_delimited (istream& is, size_t max)
+  void istreambuf::
+  close () noexcept
   {
-    LIBPROTOBUF_PRE ((is.exceptions () & (istream::badbit |
-                                          istream::failbit)) ==
-                     istream::badbit);
+    is_ = nullptr;
+    setg (nullptr, nullptr, nullptr);
+  }
+
+  bool istreambuf::
+  next ()
+  {
+    LIBPROTOBUF_PRE (is_open ());
+
+    // Skip over what is left of the current message, the part in the get
+    // area and the part still in the other stream.
+    //
+    while (left_ != 0)
+      load (min (left_, buffer_size));
+
+    setg (buf_.get (), buf_.get (), buf_.get ());
 
     // Read the size. We cannot tell its length up front, so we take a byte
     // at a time up to the last one or to the longest that a varint can be.
     //
+    position_ = read_;
+
     string b;
 
     for (;;)
     {
-      const istream::int_type c (is.get ());
+      const int_type c (is_->rdbuf ()->sbumpc ());
 
-      if (c == istream::traits_type::eof ())
+      if (traits_type::eq_int_type (c, traits_type::eof ()))
       {
         if (b.empty ())
-          return nullopt;
+          return false;
 
-        throw invalid_input (0, "incomplete message size");
+        throw invalid_input (position_, "incomplete message size");
       }
 
-      b += static_cast<char> (c);
+      ++read_;
+      b += traits_type::to_char_type (c);
 
       if ((c & 0x80) == 0 || b.size () == max_varint)
         break;
@@ -61,29 +82,195 @@ namespace protobuf
     uint64_t n;
 
     if (read_varint (b, p, n) != varint_status::complete)
-      throw invalid_input (0, "invalid message size");
+      throw invalid_input (position_, "invalid message size");
 
-    if (n > max)
-      throw invalid_input (0, "message size {} greater than limit {}", n, max);
+    if (n > max_)
+      throw invalid_input (position_,
+                           "message size {} greater than limit {}",
+                           n, max_);
 
-    // Read the message. We grow the string a chunk at a time, so that a
-    // size that the stream doesn't back up with data costs no more memory
-    // than the data that is there.
+    left_ = static_cast<size_t> (n);
+    return true;
+  }
+
+  istreambuf::int_type istreambuf::
+  underflow ()
+  {
+    if (gptr () != egptr ())
+      return traits_type::to_int_type (*gptr ());
+
+    if (!is_open () || left_ == 0)
+      return traits_type::eof ();
+
+    load (min (left_, buffer_size));
+    return traits_type::to_int_type (*gptr ());
+  }
+
+  void istreambuf::
+  load (size_t n)
+  {
+    LIBPROTOBUF_PRE (n != 0 && n <= left_ && n <= buffer_size);
+
+    // Note that we only read the bytes of the current message, since what
+    // follows it in the other stream is not ours to take yet.
     //
-    string r;
+    const size_t r (static_cast<size_t> (
+      is_->rdbuf ()->sgetn (buf_.get (), static_cast<streamsize> (n))));
 
-    while (r.size () != n)
+    read_ += r;
+
+    if (r != n)
+      throw invalid_input (position_, "incomplete message");
+
+    left_ -= n;
+    setg (buf_.get (), buf_.get (), buf_.get () + n);
+  }
+
+  // istream
+  //
+
+  istream::
+  istream (iostate e)
+    : std::istream (&buf_)
+  {
+    LIBPROTOBUF_PRE ((e & badbit) != 0);
+    exceptions (e);
+  }
+
+  istream::
+  istream (std::istream& is, size_t max, iostate e)
+    : istream (e)
+  {
+    open (is, max);
+  }
+
+  bool istream::
+  next ()
+  {
+    const bool r (buf_.next ());
+    clear ();
+    return r;
+  }
+
+  // ostreambuf
+  //
+
+  void ostreambuf::
+  open (std::ostream& os)
+  {
+    LIBPROTOBUF_PRE (!is_open ());
+    LIBPROTOBUF_PRE ((os.exceptions () & (std::ostream::badbit |
+                                          std::ostream::failbit)) ==
+                     (std::ostream::badbit | std::ostream::failbit));
+
+    if (buf_ == nullptr)
+      buf_ = make_unique_for_overwrite<char[]> (buffer_size);
+
+    os_    = &os;
+    begun_ = false;
+    message_.clear ();
+
+    // There is no message to write into until next() begins one.
+    //
+    setp (nullptr, nullptr);
+  }
+
+  void ostreambuf::
+  next ()
+  {
+    LIBPROTOBUF_PRE (is_open ());
+
+    if (begun_)
+      save ();
+
+    begun_ = true;
+    message_.clear ();
+    setp (buf_.get (), buf_.get () + buffer_size);
+  }
+
+  void ostreambuf::
+  close ()
+  {
+    if (!is_open ())
+      return;
+
+    // If writing the message fails, then there is no getting back to a
+    // consistent state, so close the buffer either way.
+    //
+    try
     {
-      const size_t o (r.size ());
-      const size_t k (min<uint64_t> (n - o, 64 * 1024));
-
-      r.resize (o + k);
-      is.read (r.data () + o, static_cast<streamsize> (k));
-
-      if (static_cast<size_t> (is.gcount ()) != k)
-        throw invalid_input (0, "incomplete message");
+      if (begun_)
+        save ();
+    }
+    catch (...)
+    {
+      os_ = nullptr;
+      setp (nullptr, nullptr);
+      throw;
     }
 
-    return r;
+    os_ = nullptr;
+    setp (nullptr, nullptr);
+  }
+
+  ostreambuf::int_type ostreambuf::
+  overflow (int_type c)
+  {
+    if (!is_open () || !begun_)
+      return traits_type::eof ();
+
+    // Move the put area to the message and start it over.
+    //
+    message_.append (pbase (), static_cast<size_t> (pptr () - pbase ()));
+    setp (buf_.get (), buf_.get () + buffer_size);
+
+    if (!traits_type::eq_int_type (c, traits_type::eof ()))
+    {
+      *pptr () = traits_type::to_char_type (c);
+      pbump (1);
+    }
+
+    return traits_type::not_eof (c);
+  }
+
+  void ostreambuf::
+  save ()
+  {
+    message_.append (pbase (), static_cast<size_t> (pptr () - pbase ()));
+    setp (buf_.get (), buf_.get () + buffer_size);
+
+    string s;
+    append_varint (s, message_.size ());
+
+    os_->write (s.data (), static_cast<streamsize> (s.size ()));
+    os_->write (message_.data (), static_cast<streamsize> (message_.size ()));
+
+    message_.clear ();
+  }
+
+  // ostream
+  //
+
+  ostream::
+  ostream (iostate e)
+    : std::ostream (&buf_)
+  {
+    LIBPROTOBUF_PRE ((e & badbit) != 0);
+    exceptions (e);
+  }
+
+  ostream::
+  ostream (std::ostream& os, iostate e)
+    : ostream (e)
+  {
+    open (os);
+  }
+
+  ostream::
+  ~ostream ()
+  {
+    // Make sure close() was called (see the class for details).
+    //
+    LIBPROTOBUF_PRE (!is_open () || !good () || uncaught_exceptions () != 0);
   }
 }

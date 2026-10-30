@@ -10,6 +10,7 @@
 #include <cstdint>      // uint8_t
 #include <cstdio>       // stdout
 #include <iostream>
+#include <iterator>     // istreambuf_iterator
 #include <optional>
 #include <string_view>
 #include <system_error> // errc
@@ -108,25 +109,30 @@ namespace
 }
 
 // Usage: argv[0] -w
-//        argv[0] -r [--size] [--max <n>]
+//        argv[0] -r [--size] [--first <n>] [--max <n>]
 //
-// -w  read messages in hex from stdin, one per line, write them to a stream
-//     with write_delimited(), and print the stream in hex
+// -w  read messages in hex from stdin, one per line, write them to an
+//     ostream, and print what it writes to the other stream in hex
 //
-// -r  read a stream in hex from stdin, read the messages from it with
-//     read_delimited() until it ends, and print each in hex on its own line
+// -r  read a stream in hex from stdin, read the messages from an istream
+//     until it ends, and print each in hex on its own line
 //
 // --size
 //
 //     print the size of each message read in place of its bytes
+//
+// --first <n>
+//
+//     read only the first n bytes of each message, leaving the rest for
+//     next() to skip
 //
 // --max <n>
 //
 //     limit the message size to n bytes
 //
 // The hex input is words of hex digits, each optionally followed by *<n> to
-// repeat its bytes n times. If a message is invalid, then print the
-// description to stderr and exit with status 1.
+// repeat its bytes n times. If the stream is invalid, then print the
+// description and the position to stderr and exit with status 1.
 //
 int
 main (int argc, char* argv[])
@@ -149,8 +155,15 @@ main (int argc, char* argv[])
     ostringstream os;
     os.exceptions (ostringstream::badbit | ostringstream::failbit);
 
+    protobuf::ostream ps (os);
+
     for (string l; getline (cin, l); )
-      write_delimited (os, from_hex (l));
+    {
+      ps.next ();
+      ps << from_hex (l);
+    }
+
+    ps.close ();
 
     println ("{}", to_hex (os.str ()));
     return 0;
@@ -159,6 +172,7 @@ main (int argc, char* argv[])
   assert (m == "-r");
 
   bool size (false);
+  optional<size_t> first;
   size_t max (default_max_message);
 
   for (int i (2); i != argc; ++i)
@@ -167,6 +181,8 @@ main (int argc, char* argv[])
 
     if (a == "--size")
       size = true;
+    else if (a == "--first" && i + 1 != argc)
+      first = parse_size (argv[++i]);
     else if (a == "--max" && i + 1 != argc)
       max = parse_size (argv[++i]);
     else
@@ -186,12 +202,30 @@ main (int argc, char* argv[])
 
   try
   {
-    while (optional<string> x = read_delimited (is, max))
-      r += (size ? to_string (x->size ()) : to_hex (*x)) + '\n';
+    protobuf::istream ps (is, max);
+
+    while (ps.next ())
+    {
+      string x;
+
+      if (first)
+      {
+        x.resize (*first);
+        ps.read (x.data (), static_cast<streamsize> (x.size ()));
+      }
+      else
+        x.assign (istreambuf_iterator<char> (ps), {});
+
+      r += (size ? to_string (x.size ()) : to_hex (x)) + '\n';
+    }
   }
   catch (const invalid_input& e)
   {
-    println (cerr, "error: {}", e.what ());
+    println (cerr,
+             "error: {}\n"
+             "  info: at offset {}",
+             e.what (),
+             e.position);
     return 1;
   }
 
