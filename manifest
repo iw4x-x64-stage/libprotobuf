@@ -17,4 +17,7 @@ build-error-email: wroy@proton.me
 depends: * build2 >= 0.18.0
 depends: * bpkg >= 0.18.0
 depends: libicuuc ^74.2.0
+# Uncomment to regenerate the manual (see doc/buildfile for details).
+#
+#depends: * cli ^1.2.0- ? ($config.libprotobuf.develop)
 builds: default

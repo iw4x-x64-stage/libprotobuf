@@ -1,0 +1,797 @@
+// Copyright (c) the IW4x authors (see the AUTHORS file).
+// SPDX-License-Identifier: GPL-3.0-only WITH AdditionRef-IW4x-Exception-1.1
+
+"\name=libprotobuf-manual"
+"\title=Manual"
+
+// NOTES
+//
+// - Maximum <pre> line is 70 characters.
+//
+
+"
+\h0#preface|Preface|
+
+This document describes \c{libprotobuf}, a C++ library for serializing and
+parsing messages in the Protocol Buffers wire format. For the details of the
+library interface refer to the comments in its public headers. For the format
+itself see the \l{https://protobuf.dev/programming-guides/encoding/ encoding
+specification}.
+
+
+\h1#intro|Introduction|
+
+The \c{libprotobuf} library is a C++ implementation of the Protocol Buffers
+wire format. A message on the wire is a sequence of fields, each a key
+followed by a value. The key holds the field number and the wire type, which
+says how the value is encoded. Which schema type the value has, such as a
+nested message, is something that only the message definition in the schema
+tells.
+
+The library works at this level. The serializer writes each field with the
+function of its schema type, and the parser moves from field to field and
+reads each one with the function of its schema type. So a program speaks a
+protocol with the schema as its guide and has no generated code to build.
+The library also carries several messages in one stream, each preceded by
+its size, with a pair of \c{iostream} classes.
+
+The parser accepts every message that the encoding specification defines and
+rejects everything else (see \l{#conformance Conformance} for details).
+
+We begin with a tutorial introduction that builds a small program for
+recording tracks, each a named series of points with the times at which we
+reached them. Along the way we check our messages against
+\c{protoc}, the schema compiler of the reference implementation. The
+remaining chapters then cover the details that the tutorial passes over.
+
+
+\h#intro-setup|Project Setup|
+
+Our program is called \c{track}. Let's start by creating a new executable
+project for it (here we assume our current working directory is \c{/tmp}):
+
+\
+$ bdep new -l c++ -t exe track
+created new executable project track in /tmp/track/
+
+$ cd track
+\
+
+To use \c{libprotobuf} in our project, we first edit the
+\c{repositories.manifest} file found in the root directory of the project and
+add the \c{libprotobuf} repository as a prerequisite:
+
+\
+role: prerequisite
+location: https://github.com/iw4x-x64-stage/libprotobuf.git#main
+\
+
+Next, we edit the \c{manifest} file (again, found in the root of our project)
+and specify the dependency on \c{libprotobuf}:
+
+\
+depends: libprotobuf ^0.1.0-a.0.1
+\
+
+\N|The \c{-a.0.1} part of the constraint lets it match the snapshots of
+\c{libprotobuf} that precede its \c{0.1.0} release, which are the only
+versions available until then. Once \c{0.1.0} is released, the constraint
+becomes \c{^0.1.0}.|
+
+Finally, we import the library in \c{track/buildfile}. We won't be writing
+tests in this tutorial, so we also remove \c{testscript} that came with the
+project, here and in the \c{track/} directory:
+
+\
+$ cat track/buildfile
+
+libs =
+import libs += libprotobuf%lib{protobuf}
+
+exe{track}: {hxx ixx txx cxx}{**} $libs
+
+cxx.poptions =+ \"-I$out_root\" \"-I$src_root\"
+\
+
+\N|If these files are new to you, see
+\l{https://build2.org/build2-toolchain/doc/build2-toolchain-intro.xhtml#guide-add-remove-deps
+Adding and Removing Dependencies} in the \c{build2} toolchain introduction for
+the details on each of them.|
+
+With the dependency in place, let's initialize our project in a build
+configuration:
+
+\
+$ bdep init -C @gcc cc config.cxx=g++ --create-host-config
+initializing in project /tmp/track/
+created configuration @gcc /tmp/track-gcc/ 1 target
+    default,forwarded,auto-synchronized
+fetching git:github.com/iw4x-x64-stage/libprotobuf#main
+    (prerequisite of dir:/tmp/track)
+fetching pkg:cppget.org/stable (prerequisite of
+    git:github.com/iw4x-x64-stage/libprotobuf#main)
+...
+synchronizing:
+  new icu-tools/74.2.0+3 [/tmp/track-host/] (required by
+    libicuuc)
+  new libicuuc/74.2.0+3 (required by libprotobuf)
+  new libprotobuf/0.1.0-a.0... (required by track)
+  new track/0.1.0-a.0.19700101000000
+\
+
+As you can see, \c{libprotobuf} depends on \c{libicuuc}, the common library
+of ICU, which checks that the values of string fields are valid UTF-8. ICU
+builds its data with its own tools, a build-time dependency that goes into a
+configuration for the host, which \c{--create-host-config} lets \c{bdep}
+create without asking. We are now ready to write some code.
+
+
+\h#intro-write|Writing a Message|
+
+Here is the schema of a track in the Protocol Buffers language. We won't be
+compiling it, but it is what our code follows and we will give it to
+\c{protoc} to check our messages:
+
+\
+$ cat ../track.proto
+
+syntax = \"proto3\";
+
+message Point
+{
+  sint32 x = 1;
+  sint32 y = 2;
+}
+
+message Track
+{
+  string name = 1;
+  repeated Point points = 2;
+  repeated uint32 times = 3;
+}
+\
+
+We will get to the times later. The first version of our program writes a
+track with a name and three points to its standard output:
+
+\
+$ cat track/track.cxx
+
+#include <print>
+#include <string>
+#include <vector>
+#include <cstdint>
+
+#include <libprotobuf/serializer.hxx>
+
+using namespace std;
+
+struct point
+{
+  int32_t x;
+  int32_t y;
+};
+
+int
+main ()
+{
+  const vector<point> ps {{0, 0}, {3, -4}, {-120, 75}};
+
+  string m;
+  protobuf::serializer s (m);
+
+  s.string (1, \"morning run\");
+
+  for (const point& p: ps)
+  {
+    s.begin_message (2);
+    s.sint32 (1, p.x);
+    s.sint32 (2, p.y);
+    s.end_message ();
+  }
+
+  print (\"{}\", m);
+}
+\
+
+The \c{protobuf::serializer} class is declared in
+\c{<libprotobuf/serializer.hxx>} and appends the message to the string that
+we give it. Everything in the library is in the \c{protobuf} namespace. For
+each field we call the function of its schema type with the field number and
+the value, so \c{string()} for the name and \c{sint32()} for the
+coordinates. A point is a nested message, which we write between
+\c{begin_message()} and \c{end_message()}. Note that the length of a nested
+message comes before it on the wire, so \c{end_message()} is where the
+serializer writes it.
+
+Let's build our program and look at what it writes:
+
+\
+$ b
+c++ track/cxx{track} -> ../track-gcc/track/track/obje{track}
+c++ ~/.build2/cache/src/libprotobuf-.../libprotobuf/cxx{parser}
+    -> ...
+...
+ld ../track-gcc/libprotobuf-.../libprotobuf/libs{protobuf}
+ld ../track-gcc/track/track/exe{track}
+ln ../track-gcc/track/track/exe{track} -> track/
+
+$ track/track | xxd
+00000000: 0a0b 6d6f 726e 696e 6720 7275 6e12 0408  ..morning run...
+00000010: 0010 0012 0408 0610 0712 0608 ef01 1096  ................
+00000020: 01                                       .
+\
+
+The message starts with \c{0a}, the key of field 1 with the len wire type
+(the field number shifted left by three bits with the wire type, 2, in the
+low three bits), then the length of the name, \c{0b}, and the name itself.
+Next comes the first point: \c{12} is the key of field 2, again len, and
+\c{04} the length of the nested message, \c{08 00 10 00}, which holds the
+two coordinates as varints.
+
+Let's see what \c{protoc} makes of it. Its \c{--decode_raw} option decodes a
+message without a schema, so it only shows the field numbers and the values
+as the wire types carry them:
+
+\
+$ track/track | protoc --decode_raw
+1: \"morning run\"
+2 {
+  1: 0
+  2: 0
+}
+2 {
+  1: 6
+  2: 7
+}
+2 {
+  1: 239
+  2: 150
+}
+\
+
+Notice that the coordinates are not the ones that we wrote. The \c{sint32}
+schema type encodes its values with ZigZag, which maps the signed values
+onto the unsigned ones alternately (0 to 0, -1 to 1, 1 to 2, etc), so that a
+value of a small magnitude takes few bytes whatever its sign. So 3 becomes 6
+and -4 becomes 7. The \c{int32} schema type writes the two's complement
+instead, which takes ten bytes for any negative value (see
+\l{#types Schema Types} for details).
+
+
+\h#intro-read|Reading a Message|
+
+Let's now teach our program to read its own messages. With the \c{read}
+argument it parses the message on its standard input and prints the track:
+
+\
+$ cat track/track.cxx
+
+#include <print>
+#include <string>
+#include <vector>
+#include <cstdint>
+#include <iostream>
+#include <iterator>
+#include <string_view>
+
+#include <libprotobuf/parser.hxx>
+#include <libprotobuf/serializer.hxx>
+
+using namespace std;
+
+struct point
+{
+  int32_t x;
+  int32_t y;
+};
+
+void
+write ()
+{
+  ... // As before.
+}
+
+point
+read_point (protobuf::parser p)
+{
+  point r {0, 0};
+
+  while (p.next ())
+  {
+    switch (p.field ())
+    {
+      case 1: r.x = p.sint32 (); break;
+      case 2: r.y = p.sint32 (); break;
+    }
+  }
+
+  return r;
+}
+
+void
+read ()
+{
+  const string m (istreambuf_iterator<char> (cin), {});
+
+  protobuf::parser p (m);
+
+  while (p.next ())
+  {
+    switch (p.field ())
+    {
+      case 1:
+      {
+        println (\"name: {}\", p.string ());
+        break;
+      }
+      case 2:
+      {
+        const point pt (read_point (p.message ()));
+        println (\"point: {} {}\", pt.x, pt.y);
+        break;
+      }
+    }
+  }
+}
+
+int
+main (int argc, char* argv[])
+{
+  try
+  {
+    if (argc > 1 && argv[1] == string_view (\"read\"))
+      read ();
+    else
+      write ();
+  }
+  catch (const protobuf::invalid_input& e)
+  {
+    println (cerr, \"error: {}\", e.what ());
+    println (cerr, \"  info: at offset {}\", e.position);
+    return 1;
+  }
+}
+\
+
+The \c{protobuf::parser} class is declared in \c{<libprotobuf/parser.hxx>}.
+Its \c{next()} function moves to the next field and returns \c{false} at the
+end of the message, \c{field()} returns the number of the current field, and
+the functions of the schema types return its value. The parser refers to
+the message, so \c{string()} returns a \c{std::string_view} into it. For a
+nested message, \c{message()} returns another parser, which we hand to
+\c{read_point()}. Note that a field that we don't look at is skipped over,
+and so is a field that our schema doesn't know.
+
+Let's give it a try:
+
+\
+$ track/track | track/track read
+name: morning run
+point: 0 0
+point: 3 -4
+point: -120 75
+\
+
+That a field we don't know is skipped is what lets a schema grow: a newer
+writer can add fields that an older reader ignores. Let's pretend that a
+newer version of our program adds field 4 with the value 42 at the end:
+
+\
+$ (track/track; printf '\\x20\\x2a') | track/track read
+name: morning run
+point: 0 0
+point: 3 -4
+point: -120 75
+\
+
+A malformed message, on the other hand, is an error. The parser throws
+\c{protobuf::invalid_input} with the description of the fault and the
+position of the field that it concerns. Let's cut our message short and
+then try a name that is not UTF-8, which a string must be:
+
+\
+$ track/track | head -c 30 | track/track read
+name: morning run
+point: 0 0
+point: 3 -4
+error: incomplete len value in field 2
+  info: at offset 25
+
+$ printf '\\x0a\\x02\\xc3\\x28' | track/track read
+error: invalid UTF-8 in string field 1
+  info: at offset 0
+\
+
+As you can see, the parser reads each field as we get to it, so we print the
+first points before it finds that the third one is incomplete. A program
+that must not act on a part of a message would parse all of it before doing
+anything with it.
+
+Our program also reads what \c{protoc} writes, which we can check with its
+\c{--encode} option. It takes the message in the text format and writes it in
+the wire format:
+
+\
+$ echo 'name: \"evening walk\" points {x: 10 y: -10} times: [0, 30]' | \\
+  protoc --proto_path=.. --encode=Track ../track.proto | \\
+  track/track read
+name: evening walk
+point: 10 -10
+\
+
+Our program skips the times, since it doesn't know them yet. Let's fix
+that.
+
+
+\h#intro-repeated|Repeated Fields|
+
+A repeated field is written as one field per element. For a repeated field
+of a scalar type other than \c{string} and \c{bytes}, the writer can also
+pack the elements into a single len field, and in the \c{proto3} syntax that
+is what the schema calls for unless told otherwise. So the times of our
+track are packed. Here are the changes to our program that write and read
+them:
+
+\
+void
+write ()
+{
+  const vector<point> ps {{0, 0}, {3, -4}, {-120, 75}};
+  const vector<uint32_t> ts {0, 60, 125};
+
+  ...
+
+  s.packed_uint32 (3, ts);
+
+  print (\"{}\", m);
+}
+
+void
+read ()
+{
+  ...
+  vector<uint32_t> ts;
+
+  while (p.next ())
+  {
+    switch (p.field ())
+    {
+      ...
+      case 3:
+      {
+        p.uint32 (ts);
+        break;
+      }
+    }
+  }
+
+  println (\"times: {}\", ts);
+}
+\
+
+The serializer writes a packed field with the \c{packed_*()} functions,
+which take the elements as a \c{std::span}. On the reading side, the
+overloads of the schema type functions that take a \c{std::vector} append
+the value of the current field to it. A reader must accept a repeated field
+in both forms, so these functions append one element if the field is not
+packed and all of them if it is.
+
+\
+$ track/track | track/track read
+name: morning run
+point: 0 0
+point: 3 -4
+point: -120 75
+times: [0, 60, 125]
+
+$ track/track | protoc --decode_raw | tail -1
+3: \"\\000<}\"
+
+$ echo 'name: \"evening walk\" points {x: 10 y: -10} times: [0, 30]' | \\
+  protoc --proto_path=.. --encode=Track ../track.proto | \\
+  track/track read
+name: evening walk
+point: 10 -10
+times: [0, 30]
+\
+
+Without the schema, \c{protoc} shows the packed field for what it is on the
+wire, a len field whose bytes are the varints 0, 60 (the character \c{<}),
+and 125 (\c{\}}). With the schema it reads our message the same as we do:
+
+\
+$ track/track | protoc --proto_path=.. --decode=Track ../track.proto
+name: \"morning run\"
+points {
+}
+points {
+  x: 3
+  y: -4
+}
+points {
+  x: -120
+  y: 75
+}
+times: 0
+times: 60
+times: 125
+\
+
+Notice that \c{protoc} doesn't print the coordinates of the first point. In
+the \c{proto3} syntax a scalar field with the value 0 is the same as a field
+that is not there, so \c{protoc} only writes and prints the fields with
+other values. Our serializer writes every field that we give it, which a
+reader takes the same way.
+
+
+\h#intro-streams|Several Messages|
+
+So far our program reads its whole standard input as one message. That is
+because a message carries no length of its own: it takes up the rest of its
+input. To keep several tracks in one file, we write each one preceded by its
+size, which is the delimited form that the reference implementation reads
+and writes as well. The \c{<libprotobuf/stream.hxx>} header provides two
+stream classes for this: \c{protobuf::ostream} writes delimited messages to
+another output stream and \c{protobuf::istream} reads them from another
+input stream. Here are the changes to our program that switch it to them:
+
+\
+$ cat track/track.cxx
+
+...
+#include <libprotobuf/stream.hxx>
+
+void
+write (string_view name)
+{
+  ...
+
+  s.string (1, name);
+
+  ...
+
+  cout.exceptions (std::ostream::badbit | std::ostream::failbit);
+
+  protobuf::ostream os (cout);
+  os.next ();
+  os << m;
+  os.close ();
+}
+
+void
+read_track (const string& m)
+{
+  ... // As read() before.
+}
+
+void
+read ()
+{
+  cin.exceptions (std::istream::badbit);
+
+  protobuf::istream is (cin);
+
+  while (is.next ())
+    read_track (string (istreambuf_iterator<char> (is), {}));
+}
+
+int
+main (int argc, char* argv[])
+{
+  try
+  {
+    if (argc == 2 && argv[1] == string_view (\"read\"))
+      read ();
+    else if (argc == 3 && argv[1] == string_view (\"write\"))
+      write (argv[2]);
+    else
+    {
+      println (cerr, \"usage: track read | track write <name>\");
+      return 1;
+    }
+  }
+  ... // As before.
+}
+\
+
+On both sides \c{next()} begins the next message. What we then write to
+\c{protobuf::ostream} makes up the message, which it writes to the other
+stream preceded by its size when the next message begins or the stream is
+closed. So the message is complete only after \c{close()}, which we call
+explicitly (see \l{#contracts Programming Errors} for what happens if we
+forget). The errors of writing to \c{cout} come through as exceptions,
+which is why \c{protobuf::ostream} requires the other stream to have the
+\c{badbit} and \c{failbit} exceptions enabled.
+
+On the reading side, \c{next()} returns \c{false} once the other stream
+ends. Otherwise, reading from \c{protobuf::istream} gets the bytes of the
+message and then the end of the stream. The faults that it finds, such as a
+stream that ends inside a message, come through as \c{invalid_input} as
+well, whose position is then the offset of the message's size in the other
+stream. This is why \c{protobuf::istream} requires the \c{badbit}
+exception, which it enables by default.
+
+Let's record two tracks and read them back:
+
+\
+$ track/track write 'morning run' >>tracks.bin
+$ track/track write 'evening walk' >>tracks.bin
+
+$ wc -c tracks.bin
+79 tracks.bin
+
+$ xxd tracks.bin | head -1
+00000000: 260a 0b6d 6f72 6e69 6e67 2072 756e 1204  &..morning run..
+
+$ track/track read <tracks.bin
+name: morning run
+point: 0 0
+point: 3 -4
+point: -120 75
+times: [0, 60, 125]
+name: evening walk
+point: 0 0
+point: 3 -4
+point: -120 75
+times: [0, 60, 125]
+\
+
+As you can see, the first message is preceded by its size, \c{26} (38
+bytes). The size comes from the stream, so \c{protobuf::istream} limits it
+to keep a corrupt stream from making us wait for, and store, a message of
+any size. The limit is 64MB unless we pass another one to the constructor.
+
+\N|On Windows the standard streams are opened in the text mode, which
+translates line endings and so corrupts binary data. A real \c{track} would
+switch \c{stdin} and \c{stdout} to the binary mode with \c{_setmode()}
+first.|
+
+
+\h1#types|Schema Types|
+
+The serializer and the parser have a function for each scalar type of the
+Protocol Buffers language, which maps onto a wire type and a C++ type as
+follows:
+
+\
+schema type        function          wire type  C++ type
+-----------        --------          ---------  --------
+int32              int32()           varint     int32_t
+int64              int64()           varint     int64_t
+uint32             uint32()          varint     uint32_t
+uint64             uint64()          varint     uint64_t
+sint32             sint32()          varint     int32_t
+sint64             sint64()          varint     int64_t
+bool               boolean()         varint     bool
+enum               enumeration()     varint     int32_t
+fixed32            fixed32()         i32        uint32_t
+sfixed32           sfixed32()        i32        int32_t
+fixed64            fixed64()         i64        uint64_t
+sfixed64           sfixed64()        i64        int64_t
+float              float32()         i32        float
+double             float64()         i64        double
+string             string()          len        string_view
+bytes              bytes()           len        string_view
+\
+
+The functions of \c{bool}, \c{enum}, \c{float}, and \c{double} are named
+after what they return, since the schema type names are C++ keywords. A
+nested message and a group are written with \c{begin_message()} and
+\c{begin_group()} up to the matching end function and read with
+\c{message()} and \c{group()}, which return a parser of their fields.
+
+The \c{int32}, \c{int64}, \c{uint32}, and \c{uint64} types write their value
+as an unsigned varint, with a negative value as its 64-bit two's
+complement. The parser takes a varint wider than the schema type as if
+converting it to the type in C++, which keeps its lower bits, so a schema can
+change a field between these four types. The \c{sint32} and \c{sint64} types
+use ZigZag instead (see \l{#intro-write Writing a Message}). A \c{bool} is
+written as 0 or 1 and read as \c{true} for any value other than 0. An
+\c{enum} is an \c{int32}, which makes its values open: the parser returns
+any value, and it is up to us to decide what to do with one that our schema
+doesn't define.
+
+The \c{string()} functions check that the value is valid UTF-8 as RFC 3629
+defines it. The serializer throws \c{protobuf::invalid_output} before
+writing anything and the parser throws \c{invalid_input}. The \c{bytes()}
+functions take any value.
+
+
+\h1#conformance|Conformance|
+
+The parser accepts every message that the encoding specification defines and
+rejects everything else. Specifically, it throws \c{invalid_input} on the
+first of the following faults in a field that it reads:
+
+\ul|
+
+\li|A key that ends with the input or is wider than 32 bits.|
+
+\li|Field number 0, which is reserved.|
+
+\li|Wire types 6 and 7, which the encoding doesn't define.|
+
+\li|A varint that ends with the input or holds more than 64 bits, which is
+the case when its tenth byte holds more than bit 63.|
+
+\li|An \c{i32} or \c{i64} value that ends with the input.|
+
+\li|A \c{len} value whose length goes past the end of the input.|
+
+\li|An \c{egroup} key without a matching \c{sgroup} key before it, a group
+without its \c{egroup} key, and an \c{egroup} key of another field than its
+group's.|
+
+|
+
+And when a value is read as a schema type:
+
+\ul|
+
+\li|A wire type that doesn't match the schema type. For a repeated field,
+\c{len} matches as well, since it holds the packed elements.|
+
+\li|A packed element that ends with its field.|
+
+\li|A \c{string} value that is not valid UTF-8.|
+
+|
+
+Note that the parser only checks the value of a \c{len} field as a nested
+message or packed elements once we read it as such, since only the schema
+tells what it holds. A group, on the other hand, the parser has to step
+over, so it finds its end as soon as it gets to it. The groups nested in it
+are checked once we read the group with \c{group()}.
+
+The parser accepts the varints that have more bytes than their value needs
+(\c{80 00} for 0, say), which the encoding allows. The reference
+implementation also accepts a tenth byte with more than bit 63 and drops the
+bits that don't fit, which we reject since no 64-bit value is written that
+way.
+
+The serializer only writes messages that the parser accepts. It writes a
+negative \c{int32} sign-extended to 64 bits, as the encoding requires, so
+that a reader of the field as \c{int64} gets the same value, and it leaves
+out a packed field without elements, which adds nothing to its repeated
+field.
+
+
+\h1#contracts|Programming Errors|
+
+Using the library in a way that its documentation rules out is a programming
+error, which the library reports as a contract violation. Recall that in the
+last version of \c{track} we call \c{close()} on \c{protobuf::ostream}
+explicitly. Let's see what happens if we forget:
+
+\
+$ track/track write 'morning run' >/dev/null
+stream.cxx:274: error: precondition violated: !is_open () ||
+    !good () || uncaught_exceptions () != 0
+stream.cxx:274: note: in '~ostream'
+\
+
+A \c{protobuf::ostream} that is destroyed while still open would lose its
+last message, so it treats this as a programming error unless the stream is
+no longer good or an exception is being thrown. Similarly, a field number
+outside of the range from 1 to \c{protobuf::max_field} and an
+\c{end_message()} call without a message to end are contract violations.
+
+By default, a contract violation prints a report like this to \c{stderr} and
+aborts the process. To handle it differently, for example, to throw an
+exception in a test, we can install our own handler with
+\c{protobuf::set_contract_handler()}, declared in
+\c{<libprotobuf/contract.hxx>}. The handler receives a
+\c{protobuf::contract_violation} that describes the failed check. If the
+handler returns, the default report is printed and the process is aborted
+all the same.
+
+The amount of checking is selected when building the library with the
+\c{LIBPROTOBUF_CONTRACT} macro: \c{0} omits the checks, \c{1} (the default)
+checks preconditions and assertions, and \c{2} adds postconditions and
+invariants. For example, to run the library's tests at the highest level:
+
+\
+$ b test config.cxx.poptions=-DLIBPROTOBUF_CONTRACT=2
+\
+"
